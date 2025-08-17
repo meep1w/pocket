@@ -1,8 +1,8 @@
 from fastapi import FastAPI
 from app.db import init_db, Base
-from .routers.postback import router as postback_router
-from .routers.access import router as access_router
-from .routers.redirects import router as redirect_router
+from app.http.routers.postback import router as postback_router
+from app.http.routers.access import router as access_router
+from app.http.routers.redirects import router as redirect_router
 from fastapi.staticfiles import StaticFiles
 
 

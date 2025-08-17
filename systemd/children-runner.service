@@ -1,0 +1,13 @@
+[Unit]
+Description=PocketBot - Children Runner
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/pocketbot
+Environment="PYTHONPATH=/opt/pocketbot"
+ExecStart=/usr/bin/python -m app.bots.child.runner
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -133,22 +133,21 @@ async def ga_agg(cb: CallbackQuery):
 
 @router.callback_query(lambda c: c.data and c.data.startswith("ga:toggle:"))
 async def ga_toggle(cb: CallbackQuery):
-    if cb.from_user.id not in settings.ga_admin_ids:
+    if not _is_ga(cb.from_user.id):
         await cb.answer(); return
     tid = int(cb.data.split(":")[2])
     db = SessionLocal()
     try:
         t = db.query(Tenant).filter(Tenant.id == tid).first()
         if not t:
-            await cb.answer("Не найден");
-            return
+            await cb.answer("not found"); return
         t.status = TenantStatus.paused if t.status == TenantStatus.active else TenantStatus.active
         db.commit()
         await cb.answer("Ок")
-        # перерисуй список, чтобы обновился статус/кнопки
         await ga_list(cb)
     finally:
         db.close()
+
 
 
 
@@ -265,32 +264,46 @@ async def ga_del(cb: CallbackQuery):
         db.close()
 
 
+# КНОПКИ:
+#  ga:del:<id>             — показать подтверждение
+#  ga:del:confirm:<id>     — выполнить удаление
+
 @router.callback_query(lambda c: c.data and c.data.startswith("ga:del:confirm:"))
 async def ga_del_confirm(cb: CallbackQuery):
-    if cb.from_user.id not in settings.ga_admin_ids:
+    if not _is_ga(cb.from_user.id):
         await cb.answer(); return
-    tid = int(cb.data.split(":")[2])
-
+    tid = int(cb.data.split(":")[3])
     db = SessionLocal()
     try:
         t = db.query(Tenant).filter(Tenant.id == tid).first()
         if not t:
-            await cb.answer("Не найден");
-            return
+            await cb.answer("Уже удалён"); return
 
-        # ставим deleted, токены НЕ трогаем (иначе IntegrityError)
+        # 1) ставим статус deleted (чтобы runner его погасил)
         t.status = TenantStatus.deleted
         db.commit()
 
-        # по желанию: подчистить связанные записи
-        db.execute("DELETE FROM users WHERE tenant_id=:tid", {"tid": tid})
-        db.execute("DELETE FROM tenant_texts WHERE tenant_id=:tid", {"tid": tid})
-        db.execute("DELETE FROM tenant_configs WHERE tenant_id=:tid", {"tid": tid})
-        db.execute("DELETE FROM postbacks WHERE tenant_id=:tid", {"tid": tid})
+        # 2) реально удаляем из БД
+        db.delete(t)
         db.commit()
 
-        await cb.message.edit_text("🗑 Клиент удалён. Все связанные данные очищены.")
-        await cb.answer("Готово")
+        await cb.answer("Удалено")
+        # вернёмся к списку
+        await ga_list(cb)
     finally:
         db.close()
+
+@router.callback_query(lambda c: c.data and c.data.startswith("ga:del:"))
+async def ga_del(cb: CallbackQuery):
+    if not _is_ga(cb.from_user.id):
+        await cb.answer(); return
+    tid = int(cb.data.split(":")[2])
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтвердить удаление", callback_data=f"ga:del:confirm:{tid}")],
+        [InlineKeyboardButton(text="⬅️ Отмена", callback_data="ga:list:1")],
+    ])
+    # добавим «соль» в текст, чтобы не ловить "message is not modified"
+    await cb.message.edit_text(f"Точно удалить клиента #{tid}? Это необратимо.", reply_markup=kb)
+    await cb.answer()
+
 

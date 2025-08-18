@@ -226,39 +226,49 @@ async def ga_pb(cb: CallbackQuery):
 
 # ---------- УДАЛЕНИЕ (с подтверждением) ----------
 
-@router.callback_query(lambda c: c.data and c.data.startswith("ga:del:"))
-async def ga_delete_ask(cb: CallbackQuery):
-    if not _is_ga(cb.from_user.id):
+@router.callback_query(lambda c: (c.data or "").startswith("ga:del:"))
+async def ga_delete(cb: CallbackQuery):
+    if cb.from_user.id not in settings.ga_admin_ids:
         await cb.answer(); return
 
-    tid = int(cb.data.split(":")[2])
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga:show:{tid}")],
-        [InlineKeyboardButton(text="🗑 Подтвердить удаление", callback_data=f"ga:del:{tid}:yes")],
-    ])
-    await cb.message.edit_text("Подтвердите удаление клиента. Бот будет остановлен.", reply_markup=kb)
-    await cb.answer()
+    parts = (cb.data or "").split(":")  # ga:del:<id>[:yes]
+    if len(parts) < 3:
+        await cb.answer("Некорректные данные"); return
 
-
-@router.callback_query(lambda c: c.data and c.data.startswith("ga:del:") and c.data.endswith(":yes"))
-async def ga_delete_do(cb: CallbackQuery):
-    if not _is_ga(cb.from_user.id):
-        await cb.answer(); return
-
-    tid = int(cb.data.split(":")[2])
-    db = SessionLocal()
     try:
-        t = db.query(Tenant).filter(Tenant.id == tid).first()
-        if not t:
-            await cb.answer("Не найден"); return
+        tid = int(parts[2])
+    except ValueError:
+        await cb.answer("Некорректный id"); return
 
-        # мягкое удаление: чтобы раннер тут же остановил поллинг
-        t.status = TenantStatus.deleted
-        t.child_bot_token = None
-        t.child_bot_username = None
-        db.commit()
-    finally:
-        db.close()
+    # Если ещё нет подтверждения — спрашиваем его
+    if len(parts) == 3:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga:show:{tid}")],
+            [InlineKeyboardButton(text="🗑 Подтвердить удаление", callback_data=f"ga:del:{tid}:yes")],
+        ])
+        await cb.message.edit_text("Подтвердите удаление клиента. Бот будет остановлен.", reply_markup=kb)
+        await cb.answer()
+        return
 
-    await cb.message.edit_text("✅ Клиент удалён (остановлен).")
-    await cb.answer()
+    # Подтверждение: ga:del:<id>:yes
+    if len(parts) >= 4 and parts[3] == "yes":
+        db = SessionLocal()
+        try:
+            t = db.query(Tenant).filter(Tenant.id == tid).first()
+            if not t:
+                await cb.answer("Не найден"); return
+
+            # мягкое удаление — чтобы раннер сразу перестал поллить
+            t.status = TenantStatus.deleted
+            t.child_bot_token = None
+            t.child_bot_username = None
+            db.commit()
+        finally:
+            db.close()
+
+        await cb.message.edit_text("✅ Клиент удалён (остановлен).")
+        await cb.answer("Удалено")
+        return
+
+    # если четвёртая часть не 'yes'
+    await cb.answer("Некорректное подтверждение")

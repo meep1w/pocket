@@ -19,6 +19,9 @@ from app.db import SessionLocal
 from app.settings import settings
 from app.utils.common import safe_delete_message
 
+from pathlib import Path
+from aiogram.types import FSInputFile
+
 
 # ---------------------- ЭКРАНЫ / КЛЮЧИ ----------------------
 KEYS = [
@@ -86,6 +89,17 @@ DEFAULT_TEXTS = {
         "en": "Access granted. Press “Get signal”.",
     },
 }
+def _project_root() -> Path:
+    # .../app/bots/child/bot_instance.py -> root = parents[4]
+    return Path(__file__).resolve().parents[4]
+
+def _find_stock_file(key: str, locale: str) -> Path | None:
+    stock = _project_root() / "static" / "stock"
+    for ext in ("jpg", "jpeg", "png", "webp"):
+        p = stock / f"{key}-{locale}.{ext}"
+        if p.exists():
+            return p
+    return None
 
 
 def key_title(key: str, locale: str) -> str:
@@ -134,24 +148,21 @@ def get_deposit_total(db, tenant_id: int, user: User) -> int:
     return int(total)
 
 
-async def send_screen(
-    bot: Bot,
-    user: User,
-    key: str,
-    locale: str,
-    text: str,
-    kb: InlineKeyboardMarkup,
-    image_file_id: Optional[str],
-):
+async def send_screen(bot: Bot, user: User, key: str, locale: str,
+                      text: str, kb: InlineKeyboardMarkup, image_file_id: Optional[str]):
     await safe_delete_message(bot, user.tg_user_id, user.last_message_id)
     if image_file_id:
         m = await bot.send_photo(user.tg_user_id, image_file_id, caption=text, reply_markup=kb)
     else:
-        try:
-            m = await bot.send_photo(user.tg_user_id, default_img_url(key, locale), caption=text, reply_markup=kb)
-        except Exception:
+        # пробуем локальный файл из static/stock
+        p = _find_stock_file(key, locale)
+        if p:
+            m = await bot.send_photo(user.tg_user_id, FSInputFile(str(p)), caption=text, reply_markup=kb)
+        else:
+            # финальный фоллбек — просто текст
             m = await bot.send_message(user.tg_user_id, text, reply_markup=kb)
     user.last_message_id = m.message_id
+
 
 
 # ------------------------------- КНОПКИ -------------------------------
@@ -214,20 +225,31 @@ async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang:
     try:
         locale = (current_lang or tenant.lang_default or "ru").lower()
         text, img = tget(db, tenant.id, "lang", locale, default_text("lang", locale))
+
         await safe_delete_message(bot, user.tg_user_id, user.last_message_id)
+        rm = kb_lang(current_lang)
+
         try:
             if img:
-                m = await bot.send_photo(user.tg_user_id, img, caption=text, reply_markup=kb_lang(current_lang))
+                # есть сохранённый file_id — шлём его
+                m = await bot.send_photo(user.tg_user_id, img, caption=text, reply_markup=rm)
             else:
-                m = await bot.send_photo(
-                    user.tg_user_id, default_img_url("lang", locale), caption=text, reply_markup=kb_lang(current_lang)
-                )
+                # пробуем локальный файл static/stock/lang-<locale>.(jpg|png|webp)
+                p = _find_stock_file("lang", locale)
+                if p:
+                    m = await bot.send_photo(user.tg_user_id, FSInputFile(str(p)), caption=text, reply_markup=rm)
+                else:
+                    # если ничего нет — просто текст
+                    m = await bot.send_message(user.tg_user_id, text, reply_markup=rm)
         except Exception:
-            m = await bot.send_message(user.tg_user_id, text, reply_markup=kb_lang(current_lang))
+            # любой фэйл фото — падаем в текст
+            m = await bot.send_message(user.tg_user_id, text, reply_markup=rm)
+
         user.last_message_id = m.message_id
         db.commit()
     finally:
         db.close()
+
 
 
 async def render_main(bot: Bot, tenant: Tenant, user: User):

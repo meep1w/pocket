@@ -4,6 +4,7 @@ from aiogram.client.default import DefaultBotProperties
 from app.settings import settings
 from app.db import init_db, Base
 from .handlers import start as h_start, ga as h_ga, onboarding as h_on
+from app.bots.parent.handlers import ga as h_ga
 
 async def main():
     init_db(Base)

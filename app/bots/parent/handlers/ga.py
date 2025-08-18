@@ -133,30 +133,23 @@ async def ga_agg(cb: CallbackQuery):
 
 @router.callback_query(lambda c: c.data and c.data.startswith("ga:toggle:"))
 async def ga_toggle(cb: CallbackQuery):
-    if not _is_ga(cb.from_user.id):
-        await cb.answer()
-        return
-
+    if cb.from_user.id not in settings.ga_admin_ids:
+        await cb.answer(); return
     tid = int(cb.data.split(":")[2])
     db = SessionLocal()
     try:
         t = db.query(Tenant).filter(Tenant.id == tid).first()
         if not t:
-            await cb.answer("Не найден")
+            await cb.answer("Не найден");
             return
-
-        if t.status == TenantStatus.deleted:
-            await cb.answer("Тенант уже удалён")
-            return
-
         t.status = TenantStatus.paused if t.status == TenantStatus.active else TenantStatus.active
         db.commit()
-
         await cb.answer("Ок")
-        # Обновим текущий экран (детали) если мы на нём, иначе просто список
-        await ga_show(cb)
+        # перерисуй список, чтобы обновился статус/кнопки
+        await ga_list(cb)
     finally:
         db.close()
+
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("ga:show:"))
@@ -274,31 +267,30 @@ async def ga_del(cb: CallbackQuery):
 
 @router.callback_query(lambda c: c.data and c.data.startswith("ga:del:confirm:"))
 async def ga_del_confirm(cb: CallbackQuery):
-    if not _is_ga(cb.from_user.id):
-        await cb.answer()
-        return
-
+    if cb.from_user.id not in settings.ga_admin_ids:
+        await cb.answer(); return
     tid = int(cb.data.split(":")[2])
+
     db = SessionLocal()
     try:
         t = db.query(Tenant).filter(Tenant.id == tid).first()
         if not t:
-            await cb.answer("Не найден")
+            await cb.answer("Не найден");
             return
 
-        # ВАЖНО: child_bot_token/username у тебя NOT NULL — их не трогаем.
-        # Только помечаем статус и коммитим.
+        # ставим deleted, токены НЕ трогаем (иначе IntegrityError)
         t.status = TenantStatus.deleted
         db.commit()
 
-        # Сообщение об успехе + кнопка назад к списку
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ К списку", callback_data="ga:list:1")]
-        ])
-        try:
-            await cb.message.edit_text("🗑 Клиент удалён (status=deleted).", reply_markup=kb)
-        except Exception:
-            pass
-        await cb.answer("Удалено")
+        # по желанию: подчистить связанные записи
+        db.execute("DELETE FROM users WHERE tenant_id=:tid", {"tid": tid})
+        db.execute("DELETE FROM tenant_texts WHERE tenant_id=:tid", {"tid": tid})
+        db.execute("DELETE FROM tenant_configs WHERE tenant_id=:tid", {"tid": tid})
+        db.execute("DELETE FROM postbacks WHERE tenant_id=:tid", {"tid": tid})
+        db.commit()
+
+        await cb.message.edit_text("🗑 Клиент удалён. Все связанные данные очищены.")
+        await cb.answer("Готово")
     finally:
         db.close()
+

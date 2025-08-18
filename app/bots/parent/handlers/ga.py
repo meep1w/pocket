@@ -234,6 +234,7 @@ async def ga_del(cb: CallbackQuery):
 async def ga_delc(cb: CallbackQuery):
     if not _is_ga(cb.from_user.id):
         await cb.answer(); return
+
     tid = int(cb.data.split(":")[2])
     db = SessionLocal()
     try:
@@ -241,22 +242,39 @@ async def ga_delc(cb: CallbackQuery):
         if not t:
             await _safe_edit(cb, "Клиент уже отсутствует."); await cb.answer(); return
 
-        # остановим бота: переведём в paused, чтобы раннер снял задачу
+        # 1) Сначала остановим детского бота — ставим paused
         if t.status == TenantStatus.active:
             t.status = TenantStatus.paused
             db.commit()
 
-        # каскадное удаление пользователей этого клиента
+        # 2) Удаляем всех пользователей клиента
         db.query(User).filter(User.tenant_id == t.id).delete(synchronize_session=False)
-        # удаляем сам тенант
-        db.delete(t)
         db.commit()
 
-        await _safe_edit(cb, f"✅ Клиент #{tid} полностью удалён.", None)
-        await cb.answer("Удалено")
+        # 3) Пытаемся удалить самого тенанта
+        try:
+            db.delete(t)
+            db.commit()
+            await _safe_edit(cb, f"✅ Клиент #{tid} полностью удалён.", None)
+            await cb.answer("Удалено")
+            return
+        except Exception as inner_exc:
+            # Если не получилось удалить запись тенанта — фоллбэк:
+            db.rollback()
+            t = db.query(Tenant).filter(Tenant.id == tid).first()
+            if t:
+                t.status = TenantStatus.deleted
+                # ничего больше не трогаем (токены/поля оставляем как есть),
+                # чтобы не ловить NOT NULL/UNIQUE ограничения
+                db.commit()
+            await _safe_edit(cb, f"⚠️ Клиента #{tid} пометили как deleted (fallback).", None)
+            await cb.answer("Помечен как deleted")
+            return
+
     except Exception as e:
         db.rollback()
         await cb.answer("Ошибка удаления")
         await _safe_edit(cb, f"❌ Ошибка удаления: <code>{e}</code>")
     finally:
         db.close()
+

@@ -108,8 +108,8 @@ def default_img_url(key: str, locale: str) -> str:
     return f"{base}/static/stock/{key}-{locale}.jpg"
 
 def _project_root() -> Path:
-    # .../app/bots/child/bot_instance.py -> корень проекта
-    return Path(__file__).resolve().parents[4]
+    # /opt/pocketbot/app/bots/child/bot_instance.py -> /opt/pocketbot
+    return Path(__file__).resolve().parents[3]
 
 def _find_stock_file(key: str, locale: str) -> Path | None:
     stock = _project_root() / "static" / "stock"
@@ -150,19 +150,33 @@ def get_deposit_total(db, tenant_id: int, user: User) -> int:
     return int(total)
 
 
-async def send_screen(bot: Bot, user: User, key: str, locale: str,
-                      text: str, kb: InlineKeyboardMarkup, image_file_id: Optional[str]):
+async def send_screen(bot, user, key: str, locale: str, text: str, kb, image_file_id: str | None):
     await safe_delete_message(bot, user.tg_user_id, user.last_message_id)
+
+    # 1) пробуем file_id из БД
     if image_file_id:
-        m = await bot.send_photo(user.tg_user_id, image_file_id, caption=text, reply_markup=kb)
-    else:
-        # пробуем локальный файл из static/stock
-        p = _find_stock_file(key, locale)
-        if p:
+        try:
+            m = await bot.send_photo(user.tg_user_id, image_file_id, caption=text, reply_markup=kb)
+            user.last_message_id = m.message_id
+            return
+        except TelegramBadRequest:
+            # битый file_id — идём на сток
+            pass
+        except Exception:
+            pass
+
+    # 2) пробуем локальный сток
+    p = _find_stock_file(key, locale)
+    if p:
+        try:
             m = await bot.send_photo(user.tg_user_id, FSInputFile(str(p)), caption=text, reply_markup=kb)
-        else:
-            # финальный фоллбек — просто текст
-            m = await bot.send_message(user.tg_user_id, text, reply_markup=kb)
+            user.last_message_id = m.message_id
+            return
+        except Exception:
+            pass
+
+    # 3) совсем без картинки
+    m = await bot.send_message(user.tg_user_id, text, reply_markup=kb)
     user.last_message_id = m.message_id
 
 

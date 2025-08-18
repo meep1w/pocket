@@ -1,20 +1,26 @@
 import asyncio
 from typing import Dict
 
+from aiogram import Bot
 from app.db import SessionLocal
 from app.models import Tenant, TenantStatus
 from app.bots.child.bot_instance import run_child_bot
+from app.settings import settings
+
+CHECK_INTERVAL_SEC = 5
+
+parent_bot = Bot(token=settings.parent_bot_token)  # для проверки членства
 
 
-CHECK_INTERVAL_SEC = 5  # как часто сверять состояние в БД
+async def _owner_is_member(owner_tg_id: int) -> bool:
+    try:
+        m = await parent_bot.get_chat_member(settings.private_channel_id, owner_tg_id)
+        return m.status not in ("left", "kicked")
+    except Exception:
+        return False
 
 
 async def manager_loop():
-    """
-    Держим пул задач для активных тенантов.
-    Если тенант стал paused/deleted — гасим его задачу.
-    Если появился новый active — запускаем.
-    """
     tasks: Dict[int, asyncio.Task] = {}
 
     async def stop_task(tid: int):
@@ -29,19 +35,26 @@ async def manager_loop():
     while True:
         db = SessionLocal()
         try:
-            # все актуальные активные тенанты
-            active_tenants = db.query(Tenant).filter(Tenant.status == TenantStatus.active).all()
-            active_ids = {t.id for t in active_tenants}
+            # автопауза, если владелец не в канале
+            active = db.query(Tenant).filter(Tenant.status == TenantStatus.active).all()
+            for t in active:
+                ok = await _owner_is_member(t.owner_tg_id)
+                if not ok:
+                    t.status = TenantStatus.paused
+            db.commit()
 
-            # 1) остановить те, кто больше не активен
+            # пересобираем активных
+            active = db.query(Tenant).filter(Tenant.status == TenantStatus.active).all()
+            active_ids = {t.id for t in active}
+
+            # погасить лишние
             for tid in list(tasks.keys()):
                 if tid not in active_ids:
                     await stop_task(tid)
 
-            # 2) запустить недостающих
-            for t in active_tenants:
+            # запустить недостающих
+            for t in active:
                 if t.id not in tasks:
-                    # запускаем детского бота для этого тенанта
                     tasks[t.id] = asyncio.create_task(run_child_bot(t))
         finally:
             db.close()

@@ -61,6 +61,21 @@ async def got_token(msg: Message):
         await msg.answer("⛔️ Вы не участник приватного канала.")
         return
 
+    db = SessionLocal()
+    try:
+        exists = db.query(Tenant).filter(
+            Tenant.owner_tg_id == msg.from_user.id,
+            Tenant.status.in_([TenantStatus.active, TenantStatus.paused])
+        ).first()
+        if exists:
+            await msg.answer(
+                f"У вас уже подключен бот: <b>{exists.child_bot_username or 'без имени'}</b>.\n"
+                f"Сначала удалите его через /ga."
+            )
+            return
+    finally:
+        db.close()
+
     token = (msg.text or "").strip()
 
     # проверка токена у Telegram
@@ -73,6 +88,12 @@ async def got_token(msg: Message):
     except Exception:
         await msg.answer("❌ Токен невалиден. Проверьте и пришлите ещё раз.")
         return
+    finally:
+        # чтобы не было "Unclosed client session"
+        try:
+            await test_bot.session.close()
+        except Exception:
+            pass
 
     db = SessionLocal()
     try:
@@ -84,7 +105,6 @@ async def got_token(msg: Message):
         )
         if settings.tenant_secret_mode == "enabled":
             t.postback_secret = token_urlsafe(24)
-
         db.add(t)
         db.commit()
     finally:
@@ -94,3 +114,4 @@ async def got_token(msg: Message):
         f"🤖 Бот <b>@{username}</b> подключён!\n"
         f"Перейдите в него и введите <code>/admin</code> для настройки."
     )
+

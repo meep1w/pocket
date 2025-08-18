@@ -14,7 +14,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 from sqlalchemy import func
 
-from app.models import Tenant, User, UserStep, TenantText, TenantConfig, Postback
+from app.models import Tenant, User, UserStep, TenantText, TenantConfig, Postback, TenantStatus
 from app.db import SessionLocal
 from app.settings import settings
 from app.utils.common import safe_delete_message
@@ -22,6 +22,8 @@ from app.utils.common import safe_delete_message
 from pathlib import Path
 from aiogram.types import FSInputFile
 
+from aiogram import BaseMiddleware
+from aiogram.types import Message, CallbackQuery
 
 # ---------------------- ЭКРАНЫ / КЛЮЧИ ----------------------
 KEYS = [
@@ -89,18 +91,6 @@ DEFAULT_TEXTS = {
         "en": "Access granted. Press “Get signal”.",
     },
 }
-def _project_root() -> Path:
-    # .../app/bots/child/bot_instance.py -> root = parents[4]
-    return Path(__file__).resolve().parents[4]
-
-def _find_stock_file(key: str, locale: str) -> Path | None:
-    stock = _project_root() / "static" / "stock"
-    for ext in ("jpg", "jpeg", "png", "webp"):
-        p = stock / f"{key}-{locale}.{ext}"
-        if p.exists():
-            return p
-    return None
-
 
 def key_title(key: str, locale: str) -> str:
     for k, names in KEYS:
@@ -116,6 +106,18 @@ def default_text(key: str, locale: str) -> str:
 def default_img_url(key: str, locale: str) -> str:
     base = settings.service_host.rstrip("/")
     return f"{base}/static/stock/{key}-{locale}.jpg"
+
+def _project_root() -> Path:
+    # .../app/bots/child/bot_instance.py -> корень проекта
+    return Path(__file__).resolve().parents[4]
+
+def _find_stock_file(key: str, locale: str) -> Path | None:
+    stock = _project_root() / "static" / "stock"
+    for ext in ("jpg", "jpeg", "png", "webp"):
+        p = stock / f"{key}-{locale}.{ext}"
+        if p.exists():
+            return p
+    return None
 
 
 def get_cfg(db: SessionLocal, tenant_id: int) -> TenantConfig:
@@ -217,7 +219,6 @@ def kb_lang(current: Optional[str]):
         ],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
 
 # ------------------------------- РЕНДЕР ЭКРАНОВ ------------------------------
 async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang: Optional[str]):
@@ -362,6 +363,41 @@ async def render_get(bot: Bot, tenant: Tenant, user: User):
 
 
 # --------------------------------- ADMIN FSM ---------------------------------
+
+class TenantGate(BaseMiddleware):
+    def __init__(self, tenant_id: int):
+        super().__init__()
+        self.tenant_id = tenant_id
+
+    async def __call__(self, handler, event, data):
+        try:
+            uid = None
+            if isinstance(event, Message):
+                uid = event.from_user.id
+            elif isinstance(event, CallbackQuery):
+                uid = event.from_user.id
+
+            # проверка статуса из БД
+            db = SessionLocal()
+            try:
+                t = db.query(Tenant).filter(Tenant.id == self.tenant_id).first()
+                status = t.status if t else "deleted"
+            finally:
+                db.close()
+
+            if status != TenantStatus.active:
+                # молча глушим. Можно отправить текст, но лучше не спамить.
+                if isinstance(event, Message):
+                    await event.answer("⏸ Бот на паузе / удалён.")
+                elif isinstance(event, CallbackQuery):
+                    await event.answer("⏸ Бот на паузе / удалён.", show_alert=False)
+                return  # не пропускаем дальше
+        except Exception:
+            # на всякий пожарный — лучше заглушить, чем уронить обработчик
+            return
+        return await handler(event, data)
+
+
 class AdminForm(StatesGroup):
     waiting_support = State()
     waiting_ref = State()
@@ -485,6 +521,8 @@ async def run_child_bot(tenant: Tenant):
     bot = Bot(token=tenant.child_bot_token, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher(storage=MemoryStorage())
     r = Router()
+    r.message.outer_middleware(TenantGate(tenant.id))
+    r.callback_query.outer_middleware(TenantGate(tenant.id))
 
     # -------- PUBLIC --------
     @r.message(F.text == "/start")

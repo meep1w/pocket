@@ -1,86 +1,60 @@
 import asyncio
 from typing import Dict
-from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
-from app.db import SessionLocal, init_db, Base
+
+from app.db import SessionLocal
 from app.models import Tenant, TenantStatus
-from app.settings import settings
-from .bot_instance import run_child_bot
+from app.bots.child.bot_instance import run_child_bot
 
-class ChildrenManager:
-    def __init__(self):
-        self.tasks: Dict[int, asyncio.Task] = {}
-        self.parent_bot = Bot(
-            token=settings.parent_bot_token,
-            default=DefaultBotProperties(parse_mode="HTML")
-        )
 
-    async def close(self):
-        await self.parent_bot.session.close()
+CHECK_INTERVAL_SEC = 5  # как часто сверять состояние в БД
 
-    async def refresh(self):
-        db = SessionLocal()
-        try:
-            tenants = db.query(Tenant).filter(Tenant.status != TenantStatus.deleted).all()
-        finally:
-            db.close()
 
-        current_ids = set(self.tasks.keys())
-        want_running = {t.id for t in tenants if t.status == TenantStatus.active}
+async def manager_loop():
+    """
+    Держим пул задач для активных тенантов.
+    Если тенант стал paused/deleted — гасим его задачу.
+    Если появился новый active — запускаем.
+    """
+    tasks: Dict[int, asyncio.Task] = {}
 
-        # start new
-        for tid in want_running - current_ids:
-            db = SessionLocal()
+    async def stop_task(tid: int):
+        task = tasks.pop(tid, None)
+        if task and not task.done():
+            task.cancel()
             try:
-                t = db.query(Tenant).filter(Tenant.id == tid).first()
-            finally:
-                db.close()
-            self.tasks[tid] = asyncio.create_task(run_child_bot(t))
+                await task
+            except asyncio.CancelledError:
+                pass
 
-        # stop paused
-        for tid in list(current_ids - want_running):
-            task = self.tasks.pop(tid, None)
-            if task:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    pass
-
-    async def auto_pause_by_membership(self):
+    while True:
         db = SessionLocal()
         try:
-            tenants = db.query(Tenant).filter(Tenant.status != TenantStatus.deleted).all()
-            for t in tenants:
-                try:
-                    m = await self.parent_bot.get_chat_member(settings.private_channel_id, t.owner_tg_id)
-                    ok = m.status not in ("left", "kicked")
-                except Exception:
-                    ok = False
-                if not ok and t.status == TenantStatus.active:
-                    t.status = TenantStatus.paused
-                    db.commit()
-                if ok and t.status == TenantStatus.paused:
-                    t.status = TenantStatus.active
-                    db.commit()
+            # все актуальные активные тенанты
+            active_tenants = db.query(Tenant).filter(Tenant.status == TenantStatus.active).all()
+            active_ids = {t.id for t in active_tenants}
+
+            # 1) остановить те, кто больше не активен
+            for tid in list(tasks.keys()):
+                if tid not in active_ids:
+                    await stop_task(tid)
+
+            # 2) запустить недостающих
+            for t in active_tenants:
+                if t.id not in tasks:
+                    # запускаем детского бота для этого тенанта
+                    tasks[t.id] = asyncio.create_task(run_child_bot(t))
         finally:
             db.close()
 
-async def main():
-    init_db(Base)
-    mgr = ChildrenManager()
-    try:
-        while True:
-            await mgr.refresh()
-            await mgr.auto_pause_by_membership()
-            await asyncio.sleep(10)
-    finally:
-        await mgr.close()
+        await asyncio.sleep(CHECK_INTERVAL_SEC)
 
-if __name__ == "__main__":
+
+def main():
     try:
-        asyncio.run(main())
+        asyncio.run(manager_loop())
     except KeyboardInterrupt:
         pass
+
+
+if __name__ == "__main__":
+    main()

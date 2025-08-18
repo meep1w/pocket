@@ -1,10 +1,19 @@
+# app/bots/parent/handlers/ga.py
+
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    Message, CallbackQuery,
+    InlineKeyboardMarkup, InlineKeyboardButton
+)
+from aiogram.exceptions import TelegramBadRequest
 
 from app.settings import settings
 from app.db import SessionLocal
-from app.models import Tenant, TenantStatus, User, UserStep, TenantText, TenantConfig, Postback
+from app.models import (
+    Tenant, TenantStatus, User, UserStep,
+    TenantText, TenantConfig, Postback
+)
 
 router = Router()
 
@@ -13,11 +22,28 @@ def _is_ga(uid: int) -> bool:
     return uid in settings.ga_admin_ids
 
 
-def _t_line(db, t: Tenant) -> str:
+def _safe_edit_text(message, text: str, reply_markup=None):
+    async def _do():
+        try:
+            await message.edit_text(text, reply_markup=reply_markup)
+        except TelegramBadRequest as e:
+            # игнорируем "message is not modified"
+            if "message is not modified" not in str(e).lower():
+                raise
+    return _do()
+
+
+def t_line(db, t: Tenant) -> str:
     total = db.query(User).filter(User.tenant_id == t.id).count()
-    reg = db.query(User).filter(User.tenant_id == t.id, User.step >= UserStep.registered).count()
-    dep = db.query(User).filter(User.tenant_id == t.id, User.step == UserStep.deposited).count()
-    return f"#{t.id} {t.child_bot_username or '—'} — <b>{t.status}</b> | 👥 {total} / 📝 {reg} / 💰 {dep}"
+    reg = db.query(User).filter(
+        User.tenant_id == t.id,
+        User.step >= UserStep.registered
+    ).count()
+    dep = db.query(User).filter(
+        User.tenant_id == t.id,
+        User.step == UserStep.deposited
+    ).count()
+    return f"#{t.id} {t.child_bot_username} — <b>{t.status}</b> | 👥 {total} / 📝 {reg} / 💰 {dep}"
 
 
 @router.message(Command("ga"))
@@ -31,32 +57,37 @@ async def ga_menu(msg: Message):
     await msg.answer("Главное меню администратора:", reply_markup=kb)
 
 
-@router.callback_query(lambda c: (c.data or "").startswith("ga:list:"))
+@router.callback_query(lambda c: c.data and c.data.startswith("ga:list:"))
 async def ga_list(cb: CallbackQuery):
     if not _is_ga(cb.from_user.id):
-        await cb.answer(); return
+        await cb.answer()
+        return
 
-    try:
-        page = int((cb.data or "ga:list:1").split(":")[2])
-    except Exception:
-        page = 1
-
+    page = int(cb.data.split(":")[2])
     per = 10
     db = SessionLocal()
     try:
         q = db.query(Tenant).filter(Tenant.status != TenantStatus.deleted)
         total = q.count()
-        tenants = q.order_by(Tenant.id.desc()).offset((page - 1) * per).limit(per).all()
+        tenants = (
+            q.order_by(Tenant.id.desc())
+             .offset((page - 1) * per)
+             .limit(per)
+             .all()
+        )
 
         if not tenants:
-            await cb.message.edit_text("Клиентов пока нет.",
-                                       reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                                           [InlineKeyboardButton(text="⬅️ Назад", callback_data="ga:agg")]
-                                       ]))
-            await cb.answer(); return
+            await _safe_edit_text(
+                cb.message,
+                "Клиентов пока нет.",
+                InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="ga:menu")]
+                ])
+            )
+            await cb.answer()
+            return
 
-        lines = [_t_line(db, t) for t in tenants]
-
+        lines = [t_line(db, t) for t in tenants]
         rows = []
         for t in tenants:
             rows.append([
@@ -76,17 +107,21 @@ async def ga_list(cb: CallbackQuery):
         if nav:
             rows.append(nav)
 
-        await cb.message.edit_text("Клиенты:\n" + "\n".join(lines),
-                                   reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        await _safe_edit_text(
+            cb.message,
+            "Клиенты:\n" + "\n".join(lines),
+            InlineKeyboardMarkup(inline_keyboard=rows)
+        )
         await cb.answer()
     finally:
         db.close()
 
 
-@router.callback_query(lambda c: (c.data or "") == "ga:agg")
+@router.callback_query(lambda c: c.data == "ga:agg")
 async def ga_agg(cb: CallbackQuery):
     if not _is_ga(cb.from_user.id):
-        await cb.answer(); return
+        await cb.answer()
+        return
 
     db = SessionLocal()
     try:
@@ -119,153 +154,179 @@ async def ga_agg(cb: CallbackQuery):
             [InlineKeyboardButton(text="⬅️ К списку", callback_data="ga:list:1")],
             [InlineKeyboardButton(text="🔄 Обновить", callback_data="ga:agg")],
         ])
-        await cb.message.edit_text(text, reply_markup=kb)
+        await _safe_edit_text(cb.message, text, kb)
         await cb.answer()
     finally:
         db.close()
 
 
-@router.callback_query(lambda c: (c.data or "").startswith("ga:toggle:"))
+@router.callback_query(lambda c: c.data and c.data.startswith("ga:toggle:"))
 async def ga_toggle(cb: CallbackQuery):
     if not _is_ga(cb.from_user.id):
-        await cb.answer(); return
+        await cb.answer()
+        return
 
-    try:
-        tid = int((cb.data or "").split(":")[2])
-    except Exception:
-        await cb.answer("Некорректный id"); return
-
+    tid = int(cb.data.split(":")[2])
     db = SessionLocal()
     try:
         t = db.query(Tenant).filter(Tenant.id == tid).first()
         if not t:
-            await cb.answer("Не найден"); return
+            await cb.answer("Не найден")
+            return
+
+        # переключаем статус
         t.status = TenantStatus.paused if t.status == TenantStatus.active else TenantStatus.active
         db.commit()
+
+        # child-runner должен смотреть в статус и останавливать/запускать бота сам
+        await cb.answer("Готово")
+        # обновим список на той же странице
+        await ga_list(cb)
     finally:
         db.close()
 
-    await cb.answer("Ок")
-    await ga_list(cb)
 
-
-@router.callback_query(lambda c: (c.data or "").startswith("ga:show:"))
+@router.callback_query(lambda c: c.data and c.data.startswith("ga:show:"))
 async def ga_show(cb: CallbackQuery):
     if not _is_ga(cb.from_user.id):
-        await cb.answer(); return
+        await cb.answer()
+        return
 
-    try:
-        tid = int((cb.data or "").split(":")[2])
-    except Exception:
-        await cb.answer("Некорректный id"); return
-
+    tid = int(cb.data.split(":")[2])
     db = SessionLocal()
     try:
         t = db.query(Tenant).filter(Tenant.id == tid).first()
         if not t:
-            await cb.answer("Не найден"); return
+            await cb.answer("Не найден")
+            return
 
-        line = _t_line(db, t)
+        line = t_line(db, t)
         txt = (
             f"{line}\n"
             f"Владелец: <code>{t.owner_tg_id}</code>\n"
             f"Support: {t.support_url or '—'}\n"
-            f"Ref: {t.ref_link or '—'}"
+            f"Ref: {t.ref_link or '—'}\n"
+            f"MiniApp: {t.miniapp_url or settings.miniapp_url or '—'}\n"
+            f"Deposit URL: {t.deposit_link or '—'}"
         )
         rows = [
             [InlineKeyboardButton(text="🔁 Постбэки", callback_data=f"ga:pb:{t.id}")],
-            [InlineKeyboardButton(text="📝 Заметка", callback_data=f"ga:note:{t.id}")],
+            [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"ga:del:{t.id}")],
             [InlineKeyboardButton(text="⬅️ К списку", callback_data="ga:list:1")],
         ]
-        await cb.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        await _safe_edit_text(cb.message, txt, InlineKeyboardMarkup(inline_keyboard=rows))
         await cb.answer()
     finally:
         db.close()
 
 
-@router.callback_query(lambda c: (c.data or "").startswith("ga:pb:"))
+@router.callback_query(lambda c: c.data and c.data.startswith("ga:pb:"))
 async def ga_pb(cb: CallbackQuery):
     if not _is_ga(cb.from_user.id):
-        await cb.answer(); return
+        await cb.answer()
+        return
 
-    try:
-        tid = int((cb.data or "").split(":")[2])
-    except Exception:
-        await cb.answer("Некорректный id"); return
-
+    tid = int(cb.data.split(":")[2])
     db = SessionLocal()
     try:
         t = db.query(Tenant).filter(Tenant.id == tid).first()
         if not t:
-            await cb.answer("Не найден"); return
+            await cb.answer("Не найден")
+            return
 
         secret = t.postback_secret or settings.global_postback_secret
-        base = settings.service_host
+        base = settings.service_host.rstrip("/")
         reg = f"{base}/pb?tenant_id={t.id}&event=registration&t={secret}&click_id={{click_id}}&trader_id={{trader_id}}"
         dep = f"{base}/pb?tenant_id={t.id}&event=deposit&t={secret}&click_id={{click_id}}&trader_id={{trader_id}}&sum={{sumdep}}"
 
         txt = (
-            f"Постбэки для {t.child_bot_username or '—'}\n\n"
-            f"Регистрация:\n<code>{reg}</code>\n"
-            f"Депозит:\n<code>{dep}</code>\n\n"
-            "PP макросы (вписать 1-в-1):\n"
-            "Регистрация: click_id→click_id, trader_id→trader_id\n"
-            "Депозит: click_id→click_id, trader_id→trader_id, sumdep→sum"
+            f"Постбэки для {t.child_bot_username}\n\n"
+            f"📝 Регистрация:\n<code>{reg}</code>\n\n"
+            f"💳 Депозит:\n<code>{dep}</code>\n\n"
+            "Макросы в PocketPartners (вписать 1-в-1):\n"
+            "• Регистрация: click_id→<code>click_id</code>, trader_id→<code>trader_id</code>\n"
+            "• Депозит: click_id→<code>click_id</code>, trader_id→<code>trader_id</code>, sumdep→<code>sum</code>"
         )
+
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"ga:show:{t.id}")]
         ])
-        await cb.message.edit_text(txt, reply_markup=kb, disable_web_page_preview=True)
+        await _safe_edit_text(cb.message, txt, kb)
         await cb.answer()
     finally:
         db.close()
 
 
-# === УДАЛЕНИЕ (жёсткое, с подтверждением) ===
-@router.callback_query(lambda c: (c.data or "").startswith("ga:del:"))
-async def ga_delete(cb: CallbackQuery):
+# -------- Удаление клиента (с подтверждением) --------
+
+@router.callback_query(lambda c: c.data and c.data.startswith("ga:del:"))
+async def ga_del(cb: CallbackQuery):
     if not _is_ga(cb.from_user.id):
-        await cb.answer(); return
-
-    parts = (cb.data or "").split(":")  # ga:del:<id>[:yes]
-    if len(parts) < 3:
-        await cb.answer("Некорректные данные"); return
-
-    try:
-        tid = int(parts[2])
-    except ValueError:
-        await cb.answer("Некорректный id"); return
-
-    # 1-й клик — спросить подтверждение
-    if len(parts) == 3:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Отмена", callback_data=f"ga:show:{tid}")],
-            [InlineKeyboardButton(text="🗑 Подтвердить удаление", callback_data=f"ga:del:{tid}:yes")],
-        ])
-        await cb.message.edit_text("Подтвердите удаление клиента. Все данные будут удалены.", reply_markup=kb)
-        await cb.answer(); return
-
-    # 2-й клик — выполняем жёсткое удаление
-    if parts[3] == "yes":
-        db = SessionLocal()
-        try:
-            t = db.query(Tenant).filter(Tenant.id == tid).first()
-            if not t:
-                await cb.answer("Не найден"); return
-
-            # Удаляем все связанные записи (каскадом вручную)
-            db.query(User).filter(User.tenant_id == tid).delete(synchronize_session=False)
-            db.query(TenantText).filter(TenantText.tenant_id == tid).delete(synchronize_session=False)
-            db.query(TenantConfig).filter(TenantConfig.tenant_id == tid).delete(synchronize_session=False)
-            db.query(Postback).filter(Postback.tenant_id == tid).delete(synchronize_session=False)
-
-            db.delete(t)
-            db.commit()
-        finally:
-            db.close()
-
-        await cb.message.edit_text("✅ Клиент и все связанные данные удалены.")
-        await cb.answer("Удалено")
+        await cb.answer()
         return
 
-    await cb.answer("Некорректное подтверждение")
+    tid = int(cb.data.split(":")[2])
+    db = SessionLocal()
+    try:
+        t = db.query(Tenant).filter(Tenant.id == tid).first()
+        if not t:
+            await cb.answer("Не найден")
+            return
+
+        text = (
+            f"Удалить клиента #{t.id} {t.child_bot_username}?\n\n"
+            "Это полностью удалит:\n"
+            "• запись клиента;\n"
+            "• пользователей, постбеки, контент, конфиг.\n\n"
+            "Действие необратимо."
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Подтвердить удаление", callback_data=f"ga:delconfirm:{t.id}")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data=f"ga:show:{t.id}")],
+        ])
+        await _safe_edit_text(cb.message, text, kb)
+        await cb.answer()
+    finally:
+        db.close()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("ga:delconfirm:"))
+async def ga_del_confirm(cb: CallbackQuery):
+    if not _is_ga(cb.from_user.id):
+        await cb.answer()
+        return
+
+    tid = int(cb.data.split(":")[2])
+    db = SessionLocal()
+    try:
+        # соберём всё, что связано с tenant_id
+        users = db.query(User).filter(User.tenant_id == tid).all()
+        for u in users:
+            db.delete(u)
+
+        pbs = db.query(Postback).filter(Postback.tenant_id == tid).all()
+        for p in pbs:
+            db.delete(p)
+
+        texts = db.query(TenantText).filter(TenantText.tenant_id == tid).all()
+        for tt in texts:
+            db.delete(tt)
+
+        cfg = db.query(TenantConfig).filter(TenantConfig.tenant_id == tid).first()
+        if cfg:
+            db.delete(cfg)
+
+        t = db.query(Tenant).filter(Tenant.id == tid).first()
+        if t:
+            db.delete(t)
+
+        db.commit()
+
+        # сообщение об успехе (и кнопка вернуться к списку)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ К списку", callback_data="ga:list:1")]
+        ])
+        await _safe_edit_text(cb.message, f"Клиент #{tid} удалён ✅", kb)
+        await cb.answer("Удалено")
+    finally:
+        db.close()

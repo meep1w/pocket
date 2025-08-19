@@ -252,16 +252,17 @@ def kb_lang(current: Optional[str]):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def kb_subscribe(locale: str, channel_url: str):
+def kb_subscribe(locale: str, channel_url: str) -> InlineKeyboardMarkup:
     go_txt = "🚀 Перейти в канал" if locale == "ru" else "🚀 Go to channel"
-    chk_txt = "🔄 Проверить подписку" if locale == "ru" else "🔄 Check subscription"
     back_txt = "🏠 Главное меню" if locale == "ru" else "🏠 Main menu"
+
     rows = [
         [InlineKeyboardButton(text=go_txt, url=channel_url or "about:blank")],
-        [InlineKeyboardButton(text=chk_txt, callback_data="sub:check")],
         [InlineKeyboardButton(text=back_txt, callback_data="menu:main")],
     ]
+
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 # ------------------------------- РЕНДЕР ЭКРАНОВ ------------------------------
 async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang: Optional[str]):
@@ -323,12 +324,17 @@ async def render_subscribe(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
     try:
         locale = user.lang or tenant.lang_default or "ru"
-        text, img = tget(db, tenant.id, "subscribe", locale, default_text("subscribe", locale))
+        text, img = tget(
+            db, tenant.id, "subscribe", locale, default_text("subscribe", locale)
+        )
+
         kb = kb_subscribe(locale, tenant.channel_url or "")
-        await send_screen(bot, user, "subscribe", locale, text, kb, img)
+
+        await send_screen(bot, user, key="subscribe", locale=locale, text=text, kb=kb, img=img)
         db.commit()
     finally:
         db.close()
+
 
 
 def _parse_channel_identifier(url: str) -> Optional[str]:
@@ -345,16 +351,25 @@ def _parse_channel_identifier(url: str) -> Optional[str]:
     return None  # инвайты/приватные без username проверить нельзя
 
 
-async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
-    ident = _parse_channel_identifier(channel_url)
-    if not ident:
-        return False
+async def is_user_subscribed(bot: Bot, channel: str, user_id: int) -> bool:
+    """
+    Проверяем, состоит ли пользователь в канале.
+    Работает и для приватных каналов (с заявками), если бот — админ.
+    """
+    if not channel:
+        return True
     try:
-        member = await bot.get_chat_member(ident, user_id)
-        status = getattr(member, "status", None)
-        return status in {"member", "creator", "administrator"}
-    except Exception:
+        if channel.startswith("http"):
+            if "t.me/" in channel:
+                channel = channel.split("t.me/")[-1]
+                channel = channel.lstrip("+@")
+        member = await bot.get_chat_member(channel, user_id)
+        return member.status in ("member", "administrator", "creator")
+    except Exception as e:
+        print(f"[subscribe-check] error: {e}")
         return False
+
+
 
 
 async def render_get(bot: Bot, tenant: Tenant, user: User):
@@ -1306,7 +1321,7 @@ async def run_child_bot(tenant: Tenant):
             locale = user.lang or tenant.lang_default or "ru"
             cfg = get_cfg(db, tenant.id)
 
-            # Сначала подписка
+            # перед step регистрации
             if cfg.require_subscription:
                 ok = await is_user_subscribed(bot, tenant.channel_url or "", user.tg_user_id)
                 if not ok:

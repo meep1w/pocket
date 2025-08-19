@@ -25,16 +25,15 @@ from aiogram.types import FSInputFile
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery
 
-
 # ---------------------- ЭКРАНЫ / КЛЮЧИ ----------------------
 KEYS = [
-    ("lang",      {"ru": "Выбор языка",         "en": "Language"}),
-    ("main",      {"ru": "Главное меню",        "en": "Main menu"}),
-    ("guide",     {"ru": "Инструкция",          "en": "Instruction"}),
-    ("subscribe", {"ru": "Проверка подписки",   "en": "Subscription check"}),
-    ("step1",     {"ru": "Шаг 1. Регистрация",  "en": "Step 1. Registration"}),
-    ("step2",     {"ru": "Шаг 2. Депозит",      "en": "Step 2. Deposit"}),
-    ("unlocked",  {"ru": "Доступ открыт",       "en": "Access granted"}),
+    ("lang",     {"ru": "Выбор языка",        "en": "Language"}),
+    ("main",     {"ru": "Главное меню",       "en": "Main menu"}),
+    ("guide",    {"ru": "Инструкция",         "en": "Instruction"}),
+    ("subscribe", {"ru": "Подписка на канал",  "en": "Subscribe"}),
+    ("step1",    {"ru": "Шаг 1. Регистрация", "en": "Step 1. Registration"}),
+    ("step2",    {"ru": "Шаг 2. Депозит",     "en": "Step 2. Deposit"}),
+    ("unlocked", {"ru": "Доступ открыт",      "en": "Access granted"}),
 ]
 
 # ЕДИНЫЕ дефолт-тексты (используются везде: первичный показ, прогресс, предпросмотр)
@@ -63,16 +62,18 @@ DEFAULT_TEXTS = {
             "4) If a signal fails, it’s recommended to double the amount to compensate on the next signal."
         ),
     },
+
     "subscribe": {
         "ru": (
-            "Для начала подпишитесь на наш канал, чтобы продолжить 📢\n\n"
-            "После подписки вернитесь сюда и нажмите «Главное меню»."
+            "Для начала подпишитесь на канал.\n\n"
+            "После подписки нажмите «🔄 Проверить подписку»."
         ),
         "en": (
-            "First, please subscribe to our channel to continue 📢\n\n"
-            "After subscribing, come back here and press “Main menu”."
+            "First, subscribe to the channel.\n\n"
+            "After subscribing, tap “🔄 Check subscription”."
         ),
     },
+
     "step1": {
         "ru": (
             "⚡️Регистрация\n\n"
@@ -103,7 +104,6 @@ DEFAULT_TEXTS = {
     },
 }
 
-
 def key_title(key: str, locale: str) -> str:
     for k, names in KEYS:
         if k == key:
@@ -119,11 +119,9 @@ def default_img_url(key: str, locale: str) -> str:
     base = settings.service_host.rstrip("/")
     return f"{base}/static/stock/{key}-{locale}.jpg"
 
-
 def _project_root() -> Path:
     # /opt/pocketbot/app/bots/child/bot_instance.py -> /opt/pocketbot
     return Path(__file__).resolve().parents[3]
-
 
 def _find_stock_file(key: str, locale: str) -> Path | None:
     stock = _project_root() / "static" / "stock"
@@ -137,14 +135,15 @@ def _find_stock_file(key: str, locale: str) -> Path | None:
 def get_cfg(db: SessionLocal, tenant_id: int) -> TenantConfig:
     cfg = db.query(TenantConfig).filter(TenantConfig.tenant_id == tenant_id).first()
     if not cfg:
-        # ДОБАВЛЕНО: по умолчанию отключаем проверку подписки, депозит включён, min_dep=50
-        cfg = TenantConfig(tenant_id=tenant_id, require_deposit=True, min_deposit=50, require_subscription=False)
+        cfg = TenantConfig(tenant_id=tenant_id, require_deposit=True, min_deposit=50)
         db.add(cfg)
         db.commit()
         db.refresh(cfg)
-    # Гарантируем наличие атрибутов даже если ещё нет миграций
-    if not hasattr(cfg, "require_subscription"):
-        setattr(cfg, "require_subscription", False)
+    # заполнение default для нового флага
+    if getattr(cfg, "require_subscription", None) is None:
+        cfg.require_subscription = False
+        db.commit()
+        db.refresh(cfg)
     return cfg
 
 
@@ -178,6 +177,7 @@ async def send_screen(bot, user, key: str, locale: str, text: str, kb, image_fil
             user.last_message_id = m.message_id
             return
         except TelegramBadRequest:
+            # битый file_id — идём на сток
             pass
         except Exception:
             pass
@@ -198,6 +198,7 @@ async def send_screen(bot, user, key: str, locale: str, text: str, kb, image_fil
 
 
 # ------------------------------- КНОПКИ -------------------------------
+
 def kb_main(locale: str, support_url: Optional[str], tenant: Tenant, user: User):
     # если доступ открыт — сразу web_app, иначе callback
     if user.step == UserStep.deposited:
@@ -251,16 +252,16 @@ def kb_lang(current: Optional[str]):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def kb_subscribe(locale: str, channel_url: Optional[str]):
-    go_txt = "➡️ Go to channel" if locale == "en" else "➡️ Перейти в канал"
-    back_txt = "🏠 Main menu" if locale == "en" else "🏠 Главное меню"
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=go_txt, url=channel_url or "about:blank")],
-            [InlineKeyboardButton(text=back_txt, callback_data="menu:main")],
-        ]
-    )
-
+def kb_subscribe(locale: str, channel_url: str):
+    go_txt = "🚀 Перейти в канал" if locale == "ru" else "🚀 Go to channel"
+    chk_txt = "🔄 Проверить подписку" if locale == "ru" else "🔄 Check subscription"
+    back_txt = "🏠 Главное меню" if locale == "ru" else "🏠 Main menu"
+    rows = [
+        [InlineKeyboardButton(text=go_txt, url=channel_url or "about:blank")],
+        [InlineKeyboardButton(text=chk_txt, callback_data="sub:check")],
+        [InlineKeyboardButton(text=back_txt, callback_data="menu:main")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 # ------------------------------- РЕНДЕР ЭКРАНОВ ------------------------------
 async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang: Optional[str]):
@@ -274,20 +275,25 @@ async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang:
 
         try:
             if img:
+                # есть сохранённый file_id — шлём его
                 m = await bot.send_photo(user.tg_user_id, img, caption=text, reply_markup=rm)
             else:
+                # пробуем локальный файл static/stock/lang-<locale>.(jpg|png|webp)
                 p = _find_stock_file("lang", locale)
                 if p:
                     m = await bot.send_photo(user.tg_user_id, FSInputFile(str(p)), caption=text, reply_markup=rm)
                 else:
+                    # если ничего нет — просто текст
                     m = await bot.send_message(user.tg_user_id, text, reply_markup=rm)
         except Exception:
+            # любой фэйл фото — падаем в текст
             m = await bot.send_message(user.tg_user_id, text, reply_markup=rm)
 
         user.last_message_id = m.message_id
         db.commit()
     finally:
         db.close()
+
 
 
 async def render_main(bot: Bot, tenant: Tenant, user: User):
@@ -313,43 +319,42 @@ async def render_guide(bot: Bot, tenant: Tenant, user: User):
         db.close()
 
 
-async def _is_subscribed(bot: Bot, tenant: Tenant, user: User) -> bool:
-    """
-    Проверка подписки на канал tenant.channel_url (ожидается t.me/<username> или @username).
-    Бот должен иметь доступ к каналу. Для приватных каналов требуется, чтобы бот был админом.
-    """
-    url = (tenant.channel_url or "").strip()
-    if not url:
-        return True  # если канал не задан — считаем подписку пройденной
-    identifier = None
-    if url.startswith("https://t.me/"):
-        identifier = url.split("https://t.me/", 1)[1].split("/", 1)[0]
-        if not identifier.startswith("@"):
-            identifier = "@" + identifier
-    elif url.startswith("@"):
-        identifier = url
-    else:
-        # иное — пробуем как есть
-        identifier = url
-
-    try:
-        member = await bot.get_chat_member(identifier, user.tg_user_id)
-        status = getattr(member, "status", "left")
-        return status in ("member", "administrator", "creator")
-    except Exception:
-        return False
-
-
 async def render_subscribe(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
     try:
         locale = user.lang or tenant.lang_default or "ru"
         text, img = tget(db, tenant.id, "subscribe", locale, default_text("subscribe", locale))
-        kb = kb_subscribe(locale, tenant.channel_url)
+        kb = kb_subscribe(locale, tenant.channel_url or "")
         await send_screen(bot, user, "subscribe", locale, text, kb, img)
         db.commit()
     finally:
         db.close()
+
+
+def _parse_channel_identifier(url: str) -> Optional[str]:
+    if not url:
+        return None
+    u = url.strip()
+    if u.startswith("@"):
+        return u
+    if "t.me/" in u:
+        tail = u.split("t.me/", 1)[1]
+        tail = tail.split("?", 1)[0].strip("/")
+        if tail and not tail.startswith("+") and tail.lower() != "joinchat":
+            return "@" + tail
+    return None  # инвайты/приватные без username проверить нельзя
+
+
+async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
+    ident = _parse_channel_identifier(channel_url)
+    if not ident:
+        return False
+    try:
+        member = await bot.get_chat_member(ident, user_id)
+        status = getattr(member, "status", None)
+        return status in {"member", "creator", "administrator"}
+    except Exception:
+        return False
 
 
 async def render_get(bot: Bot, tenant: Tenant, user: User):
@@ -358,9 +363,9 @@ async def render_get(bot: Bot, tenant: Tenant, user: User):
         locale = user.lang or tenant.lang_default or "ru"
         cfg = get_cfg(db, tenant.id)
 
-        # 0) Проверка подписки — ПЕРВАЯ
-        if getattr(cfg, "require_subscription", False):
-            ok = await _is_subscribed(bot, tenant, user)
+        # 0) Сначала подписка
+        if cfg.require_subscription:
+            ok = await is_user_subscribed(bot, tenant.channel_url or "", user.tg_user_id)
             if not ok:
                 await render_subscribe(bot, tenant, user)
                 db.commit()
@@ -387,7 +392,6 @@ async def render_get(bot: Bot, tenant: Tenant, user: User):
             await send_screen(bot, user, "unlocked", locale, text, kb, img)
 
         else:
-            # 1) Регистрация
             if user.step in (UserStep.new, UserStep.asked_reg):
                 text, img = tget(db, tenant.id, "step1", locale, default_text("step1", locale))
                 url = f"{settings.service_host}/r/reg?tenant_id={tenant.id}&uid={user.tg_user_id}"
@@ -409,59 +413,38 @@ async def render_get(bot: Bot, tenant: Tenant, user: User):
                 await send_screen(bot, user, "step1", locale, text, kb, img)
 
             else:
-                # 2) Депозит — если включена проверка депозита
-                if cfg.require_deposit:
-                    text, img = tget(db, tenant.id, "step2", locale, default_text("step2", locale))
-                    text = text.replace("{{min_dep}}", str(cfg.min_deposit))
+                text, img = tget(db, tenant.id, "step2", locale, default_text("step2", locale))
+                text = text.replace("{{min_dep}}", str(cfg.min_deposit))
 
-                    dep_total = get_deposit_total(db, tenant.id, user)
-                    left = max(0, cfg.min_deposit - dep_total)
-                    progress_line = (
-                        f"\n\n💵 Внесено: ${dep_total} / ${cfg.min_deposit} (осталось ${left})"
-                        if locale == "ru"
-                        else f"\n\n💵 Paid: ${dep_total} / ${cfg.min_deposit} (left ${left})"
-                    )
-                    text = text + progress_line
+                dep_total = get_deposit_total(db, tenant.id, user)
+                left = max(0, cfg.min_deposit - dep_total)
+                progress_line = (
+                    f"\n\n💵 Внесено: ${dep_total} / ${cfg.min_deposit} (осталось ${left})"
+                    if locale == "ru"
+                    else f"\n\n💵 Paid: ${dep_total} / ${cfg.min_deposit} (left ${left})"
+                )
+                text = text + progress_line
 
-                    url = f"{settings.service_host}/r/dep?tenant_id={tenant.id}&uid={user.tg_user_id}"
-                    kb = InlineKeyboardMarkup(
-                        inline_keyboard=[
-                            [InlineKeyboardButton(text="💳 Внести депозит" if locale == "ru" else "💳 Deposit", url=url)],
-                            [
-                                InlineKeyboardButton(
-                                    text=("🔄 Прогресс: $" if locale == "ru" else "🔄 Progress: $")
-                                    + f"{dep_total}/{cfg.min_deposit}",
-                                    callback_data="prog:dep",
-                                )
-                            ],
-                            [
-                                InlineKeyboardButton(
-                                    text="🏠 Главное меню" if locale == "ru" else "🏠 Main menu", callback_data="menu:main"
-                                )
-                            ],
-                        ]
-                    )
-                    user.step = UserStep.asked_deposit
-                    await send_screen(bot, user, "step2", locale, text, kb, img)
-                else:
-                    # депозит отключён — доступ открыт
-                    text, img = tget(db, tenant.id, "unlocked", locale, default_text("unlocked", locale))
-                    kb = InlineKeyboardMarkup(
-                        inline_keyboard=[
-                            [
-                                InlineKeyboardButton(
-                                    text="📈 Получить сигнал" if locale == "ru" else "📈 Get signal",
-                                    web_app=WebAppInfo(url=tenant_miniapp_url(tenant, user)),
-                                )
-                            ],
-                            [
-                                InlineKeyboardButton(
-                                    text="🏠 Главное меню" if locale == "ru" else "🏠 Main menu", callback_data="menu:main"
-                                )
-                            ],
-                        ]
-                    )
-                    await send_screen(bot, user, "unlocked", locale, text, kb, img)
+                url = f"{settings.service_host}/r/dep?tenant_id={tenant.id}&uid={user.tg_user_id}"
+                kb = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text="💳 Внести депозит" if locale == "ru" else "💳 Deposit", url=url)],
+                        [
+                            InlineKeyboardButton(
+                                text=("🔄 Прогресс: $" if locale == "ru" else "🔄 Progress: $")
+                                + f"{dep_total}/{cfg.min_deposit}",
+                                callback_data="prog:dep",
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text="🏠 Главное меню" if locale == "ru" else "🏠 Main menu", callback_data="menu:main"
+                            )
+                        ],
+                    ]
+                )
+                user.step = UserStep.asked_deposit
+                await send_screen(bot, user, "step2", locale, text, kb, img)
 
         db.commit()
     finally:
@@ -478,9 +461,9 @@ class TenantGate(BaseMiddleware):
     async def __call__(self, handler, event, data):
         try:
             if isinstance(event, Message):
-                pass
+                uid = event.from_user.id
             elif isinstance(event, CallbackQuery):
-                pass
+                uid = event.from_user.id
 
             # проверка статуса из БД
             db = SessionLocal()
@@ -491,12 +474,14 @@ class TenantGate(BaseMiddleware):
                 db.close()
 
             if status != TenantStatus.active:
+                # молча глушим. Можно отправить текст, но лучше не спамить.
                 if isinstance(event, Message):
                     await event.answer("⏸ Бот на паузе / удалён.")
                 elif isinstance(event, CallbackQuery):
                     await event.answer("⏸ Бот на паузе / удалён.", show_alert=False)
-                return
+                return  # не пропускаем дальше
         except Exception:
+            # на всякий пожарный — лучше заглушить, чем уронить обработчик
             return
         return await handler(event, data)
 
@@ -506,7 +491,7 @@ class AdminForm(StatesGroup):
     waiting_ref = State()
     waiting_dep = State()
     waiting_miniapp = State()
-    waiting_channel = State()  # ДОБАВЛЕНО: ссылка на канал
+    waiting_channel = State()  # NEW
 
     content_wait_lang = State()
     content_wait_key = State()
@@ -539,7 +524,7 @@ def kb_admin_links():
             [InlineKeyboardButton(text="✏️ Изменить Реф. ссылку",     callback_data="adm:set:ref")],
             [InlineKeyboardButton(text="✏️ Изменить ссылку депозита", callback_data="adm:set:dep")],
             [InlineKeyboardButton(text="✏️ Изменить Web-app URL",     callback_data="adm:set:miniapp")],
-            [InlineKeyboardButton(text="✏️ Изменить ссылку на канал", callback_data="adm:set:channel")],  # НОВОЕ
+            [InlineKeyboardButton(text="✏️ Изменить ссылку канала",    callback_data="adm:set:channel")],
             [InlineKeyboardButton(text="⬅️ Назад",                    callback_data="adm:menu")],
         ]
     )
@@ -576,7 +561,6 @@ def kb_content_edit(key: str, locale: str):
 
 
 def kb_params(cfg: TenantConfig):
-    # Гарантируем поле require_subscription
     req_sub = getattr(cfg, "require_subscription", False)
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -624,11 +608,9 @@ def editor_status_text(db, tenant_id: int, key: str, lang: str) -> str:
         f"Картинка: {'есть' if has_img else 'нет'}"
     )
 
-
 def tenant_miniapp_url(tenant: Tenant, user: User) -> str:
     base = (tenant.miniapp_url or settings.miniapp_url).rstrip("/")
     return f"{base}?tenant_id={tenant.id}&uid={user.tg_user_id}"
-
 
 # ---------------------------- ЗАПУСК ДЕТСКОГО БОТА ----------------------------
 async def run_child_bot(tenant: Tenant):
@@ -759,6 +741,34 @@ async def run_child_bot(tenant: Tenant):
         finally:
             db.close()
 
+    # -------- SUBSCRIBE CHECK --------
+    @r.callback_query(F.data == "sub:check")
+    async def on_sub_check(cb: CallbackQuery):
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.tenant_id == tenant.id,
+                                         User.tg_user_id == cb.from_user.id).first()
+            if not user:
+                await cb.answer()
+                return
+            locale = user.lang or tenant.lang_default or "ru"
+            cfg = get_cfg(db, tenant.id)
+
+            if not cfg.require_subscription:
+                await render_main(bot, tenant, user)
+                await cb.answer("Проверка подписки отключена" if locale == "ru" else "Subscription check is off")
+                return
+
+            ok = await is_user_subscribed(bot, tenant.channel_url or "", user.tg_user_id)
+            if ok:
+                await render_get(bot, tenant, user)
+                await cb.answer("Подписка подтверждена ✅" if locale == "ru" else "Subscription confirmed ✅")
+            else:
+                await render_subscribe(bot, tenant, user)
+                await cb.answer("Пока не вижу подписки" if locale == "ru" else "Still not subscribed")
+        finally:
+            db.close()
+
     # -------- ADMIN --------
     def owner_only(uid: int) -> bool:
         return uid == tenant.owner_tg_id
@@ -815,7 +825,7 @@ async def run_child_bot(tenant: Tenant):
 
         if action == "set:dep":
             await state.set_state(AdminForm.waiting_dep)
-            await cb.message.edit_text("Пришлите <b>ссылку для депозита</b> одним сообщением.\n\n⬅️ Или нажмите /admin чтобы отменить.")
+            await cb.message.edit_text( "Пришлите <b>ссылку для депозита</b> одним сообщением.\n\n⬅️ Или нажмите /admin чтобы отменить.")
             await cb.answer()
             return
 
@@ -842,8 +852,8 @@ async def run_child_bot(tenant: Tenant):
         if action == "set:channel":
             await state.set_state(AdminForm.waiting_channel)
             await cb.message.edit_text(
-                "Пришлите <b>ссылку на канал</b> (формат https://t.me/username или @username) одним сообщением.\n\n"
-                "Это использует экран «Проверка подписки».",)
+                "Пришлите ссылку на канал (@username или https://t.me/username).\n\n"
+                "⚠️ Для приватных инвайт-ссылок (+...) проверка не сработает. Лучше сделать публичный @username и добавить бота в канал.")
             await cb.answer()
             return
 
@@ -979,16 +989,16 @@ async def run_child_bot(tenant: Tenant):
     async def on_channel_input(msg: Message, state: FSMContext):
         if msg.from_user.id != tenant.owner_tg_id:
             return
-        ch = (msg.text or "").strip()
+        url = (msg.text or "").strip()
         db = SessionLocal()
         try:
             t = db.query(Tenant).filter(Tenant.id == tenant.id).first()
-            t.channel_url = ch  # требуются миграции
+            t.channel_url = url
             db.commit()
         finally:
             db.close()
         await state.clear()
-        await msg.answer("✅ Ссылка на канал обновлена.", reply_markup=kb_admin_main())
+        await msg.answer("✅ Ссылка канала обновлена.", reply_markup=kb_admin_main())
 
     # ---- Admin: Контент
     @r.callback_query(lambda c: c.data and c.data.startswith("adm:cl:"))
@@ -1120,8 +1130,8 @@ async def run_child_bot(tenant: Tenant):
         db = SessionLocal()
         try:
             text, img = tget(db, tenant.id, key, lang, default_text(key, lang))
+            cfg = get_cfg(db, tenant.id)
             if key == "step2":
-                cfg = get_cfg(db, tenant.id)
                 text = text.replace("{{min_dep}}", str(cfg.min_deposit))
         finally:
             db.close()
@@ -1155,28 +1165,12 @@ async def run_child_bot(tenant: Tenant):
         db = SessionLocal()
         try:
             cfg = get_cfg(db, tenant.id)
-            # поле require_subscription должно существовать в модели
-            cfg.require_subscription = not getattr(cfg, "require_subscription", False)
+            cfg.require_subscription = not bool(getattr(cfg, "require_subscription", False))
             db.commit()
             await cb.message.edit_text("⚙️ Параметры", reply_markup=kb_params(cfg))
             await cb.answer("Сохранено")
         finally:
             db.close()
-
-    @r.callback_query(F.data == "adm:param:stock_miniapp")
-    async def param_stock_miniapp(cb: CallbackQuery):
-        if cb.from_user.id != tenant.owner_tg_id:
-            await cb.answer()
-            return
-        db = SessionLocal()
-        try:
-            t = db.query(Tenant).filter(Tenant.id == tenant.id).first()
-            t.miniapp_url = None  # будет взято из settings.miniapp_url
-            db.commit()
-        finally:
-            db.close()
-        await cb.message.edit_text("✅ Вернул стоковую Web-app из ENV.", reply_markup=kb_admin_main())
-        await cb.answer()
 
     @r.callback_query(F.data == "adm:param:set_min")
     async def param_set_min(cb: CallbackQuery, state: FSMContext):
@@ -1208,7 +1202,22 @@ async def run_child_bot(tenant: Tenant):
         await state.clear()
         await msg.answer("✅ Минимальный депозит обновлён.", reply_markup=kb_admin_main())
 
-    # ---- Admin: Рассылка
+    @r.callback_query(F.data == "adm:param:stock_miniapp")
+    async def param_stock_miniapp(cb: CallbackQuery):
+        if cb.from_user.id != tenant.owner_tg_id:
+            await cb.answer()
+            return
+        db = SessionLocal()
+        try:
+            t = db.query(Tenant).filter(Tenant.id == tenant.id).first()
+            t.miniapp_url = None  # вернём значение из ENV (settings.miniapp_url)
+            db.commit()
+        finally:
+            db.close()
+        await cb.message.edit_text("✅ Вернул стоковую мини‑апп (из ENV).", reply_markup=kb_admin_main())
+        await cb.answer()
+
+    # ---- Admin: Рассылка (без изменений)
     @r.callback_query(lambda c: c.data and c.data.startswith("adm:bs:"))
     async def bcast_choose_segment(cb: CallbackQuery, state: FSMContext):
         seg = cb.data.split(":")[2]  # all/registered/deposited
@@ -1297,8 +1306,15 @@ async def run_child_bot(tenant: Tenant):
             locale = user.lang or tenant.lang_default or "ru"
             cfg = get_cfg(db, tenant.id)
 
-            # Если уже доступ — обновим главное
-            if user.step == UserStep.deposited or not cfg.require_deposit:
+            # Сначала подписка
+            if cfg.require_subscription:
+                ok = await is_user_subscribed(bot, tenant.channel_url or "", user.tg_user_id)
+                if not ok:
+                    await render_subscribe(bot, tenant, user)
+                    await cb.answer("Сначала подпишитесь" if locale == "ru" else "Please subscribe first")
+                    return
+
+            if user.step == UserStep.deposited:
                 await render_main(bot, tenant, user)
                 await cb.answer("Доступ уже открыт ✅" if locale == "ru" else "Access already unlocked ✅")
                 return
@@ -1320,8 +1336,7 @@ async def run_child_bot(tenant: Tenant):
                     [InlineKeyboardButton(text="💳 Внести депозит" if locale == "ru" else "💳 Deposit", url=url)],
                     [
                         InlineKeyboardButton(
-                            text=("🔄 Прогресс: $" if locale == "ru" else "🔄 Progress: $")
-                            + f"{dep_total}/{cfg.min_deposit}",
+                            text=("🔄 Прогресс: $" if locale == "ru" else "🔄 Progress: $") + f"{dep_total}/{cfg.min_deposit}",
                             callback_data="prog:dep",
                         )
                     ],

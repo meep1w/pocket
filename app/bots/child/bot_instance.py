@@ -222,8 +222,9 @@ def tenant_miniapp_url(tenant: Tenant, user: User) -> str:
 
     # 2) Стоковая VIP-мини-аппа из ENV — только если пользователь VIP
     is_vip = bool(getattr(user, "is_vip", False))
-    if is_vip and settings.vip_miniapp_url:
-        base = settings.vip_miniapp_url.rstrip("/")
+    vip_env = getattr(settings, "vip_miniapp_url", None)
+    if is_vip and vip_env:
+        base = vip_env.rstrip("/")
         return f"{base}?tenant_id={tenant.id}&uid={user.tg_user_id}"
 
     # 3) Обычная мини-аппа (пер-ботовая или из ENV)
@@ -290,12 +291,10 @@ def kb_subscribe(locale: str, channel_url: str) -> InlineKeyboardMarkup:
 
     rows = [
         [InlineKeyboardButton(text=go_txt, url=url)],
-        [InlineKeyboardButton(text=check_txt, callback_data="menu:subcheck")],  # ← вот эта строка
+        [InlineKeyboardButton(text=check_txt, callback_data="menu:subcheck")],
         [InlineKeyboardButton(text=back_txt, callback_data="menu:main")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
 
 
 # ------------------------------- РЕНДЕР ЭКРАНОВ ------------------------------
@@ -472,7 +471,6 @@ class TenantGate(BaseMiddleware):
             print(f"[TenantGate] error: {e}")
 
         return await handler(event, data)
-
 
 
 class AdminForm(StatesGroup):
@@ -786,9 +784,9 @@ async def run_child_bot(tenant: Tenant):
                 or (
                     (c.data or "").startswith("adm:vip:")
                     and not any((c.data or "").startswith(p) for p in (
-                    "adm:vip:do:",  # ← не перехватываем ручные постбэки
-                    "adm:vip:url:ask:",  # ← не перехватываем запрос VIP URL
-                ))
+                        "adm:vip:do:",        # отдельные хендлеры: ручные постбэки
+                        "adm:vip:url:ask:",   # отдельный хендлер: запрос VIP URL (по TG ID)
+                    ))
                 )
              )
         )
@@ -987,9 +985,7 @@ async def run_child_bot(tenant: Tenant):
             try:
                 u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
                 if not u:
-                    await cb.answer("Юзер не найден");
-                    db.close();
-                    return
+                    await cb.answer("Юзер не найден"); db.close(); return
                 # Текущее состояние
                 has_vip = bool(u.is_vip)
                 has_custom = bool(u.vip_miniapp_url)
@@ -999,21 +995,18 @@ async def run_child_bot(tenant: Tenant):
             # Кнопки: выдать VIP из ENV, задать кастомный, вернуть стоковую обычную
             rows = [
                 [InlineKeyboardButton(text="🟣 Выдать VIP-мини-апп (ENV)", callback_data=f"adm:vip:miniapp:env:{uid}")],
-                [InlineKeyboardButton(text="✏️ Задать кастомный VIP URL", callback_data=f"adm:vip:miniapp:ask:{uid}")],
-                [InlineKeyboardButton(text="↩️ Вернуть стоковую мини-апп",
-                                      callback_data=f"adm:vip:miniapp:stock:{uid}")],
+                [InlineKeyboardButton(text="✏️ Задать кастомный VIP URL",  callback_data=f"adm:vip:miniapp:ask:{uid}")],
+                [InlineKeyboardButton(text="↩️ Вернуть стоковую мини-апп", callback_data=f"adm:vip:miniapp:stock:{uid}")],
                 [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip:miniapp")],
             ]
-            # Можно подсветить текущее состояние в тексте
             status = []
             if has_vip: status.append("VIP=✅")
             if has_custom: status.append("Custom URL=✅")
             if not status: status.append("обычная мини-апп")
             title = f"Пользователь <code>{uid}</code>\nТекущее: " + ", ".join(status)
 
-            await cb.message.edit_text(title, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
-            await cb.answer();
-            return
+            await cb.message.edit_text(title, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows), disable_web_page_preview=True)
+            await cb.answer(); return
 
         if action.startswith("vip:miniapp:env:"):
             uid = int(action.split(":")[-1])
@@ -1021,19 +1014,15 @@ async def run_child_bot(tenant: Tenant):
             try:
                 u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
                 if not u:
-                    await cb.answer("Юзер не найден");
-                    db.close();
-                    return
-                u.is_vip = True  # включаем VIP
-                u.vip_miniapp_url = None  # пусть берётся из ENV (settings.vip_miniapp_url)
+                    await cb.answer("Юзер не найден"); db.close(); return
+                u.is_vip = True          # включаем VIP
+                u.vip_miniapp_url = None # пусть берётся из ENV (settings.vip_miniapp_url)
                 db.commit()
             finally:
                 db.close()
-            await cb.message.edit_text(
-                "✅ Назначена VIP-мини-апп из ENV. Пользователь увидит VIP при «Получить сигнал».",
-                reply_markup=kb_admin_main())
-            await cb.answer("Готово");
-            return
+            await cb.message.edit_text("✅ Назначена VIP-мини-апп из ENV. Пользователь увидит VIP при «Получить сигнал».",
+                                       reply_markup=kb_admin_main())
+            await cb.answer("Готово"); return
 
         if action.startswith("vip:miniapp:ask:"):
             uid = int(action.split(":")[-1])
@@ -1042,8 +1031,7 @@ async def run_child_bot(tenant: Tenant):
             await cb.message.edit_text(
                 f"Пришлите VIP Web-app URL для <code>{uid}</code> одним сообщением.\n"
                 f"Чтобы очистить, пришлите «-».")
-            await cb.answer();
-            return
+            await cb.answer(); return
 
         if action.startswith("vip:miniapp:stock:"):
             uid = int(action.split(":")[-1])
@@ -1051,18 +1039,15 @@ async def run_child_bot(tenant: Tenant):
             try:
                 u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
                 if not u:
-                    await cb.answer("Юзер не найден");
-                    db.close();
-                    return
+                    await cb.answer("Юзер не найден"); db.close(); return
                 u.vip_miniapp_url = None  # убираем кастом
-                u.is_vip = False  # выключаем VIP → откроется обычная мини-аппа (tenant/ENV)
+                u.is_vip = False          # выключаем VIP → откроется обычная мини-апп (tenant/ENV)
                 db.commit()
             finally:
                 db.close()
             await cb.message.edit_text("↩️ Вернул обычную мини-апп. Теперь «Получить сигнал» открывает не-VIP версию.",
                                        reply_markup=kb_admin_main())
-            await cb.answer("Готово");
-            return
+            await cb.answer("Готово"); return
 
         if action == "vip:byid":
             await state.set_state(AdminForm.vip_wait_user_id)
@@ -1075,14 +1060,10 @@ async def run_child_bot(tenant: Tenant):
             try:
                 u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
                 if not u:
-                    await cb.answer("Юзер не найден");
-                    db.close();
-                    return
+                    await cb.answer("Юзер не найден"); db.close(); return
 
                 u.is_vip = True
-                # Чтобы не дублировать уведомления далее
-                u.vip_notified = True
-
+                u.vip_notified = True  # чтобы не дублировать уведомления далее
                 db.commit()
             finally:
                 db.close()
@@ -1095,7 +1076,6 @@ async def run_child_bot(tenant: Tenant):
                 else:
                     text = "🎉 You’ve been granted access to the premium bot! Contact support to get connected."
 
-                # Кнопка «Поддержка», если задана
                 kb = None
                 if tenant.support_url:
                     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -1105,11 +1085,9 @@ async def run_child_bot(tenant: Tenant):
 
                 await bot.send_message(uid, text, reply_markup=kb)
             except Exception:
-                # Пользователь мог закрыть ЛС, игнорируем
                 pass
 
-            await cb.answer("VIP включён")
-            return
+            await cb.answer("VIP включён"); return
 
         if action.startswith("vip:unset:"):
             uid = int(action.split(":")[2])
@@ -1201,7 +1179,6 @@ async def run_child_bot(tenant: Tenant):
             await cb.answer()
             return
 
-    # ---------- ADMIN: ручные постбэки (VIP) ----------
     # ---------- ADMIN: ручные постбэки (VIP) ----------
 
     # ---- РЕГИСТРАЦИЯ (ручной постбэк)
@@ -1794,7 +1771,6 @@ async def run_child_bot(tenant: Tenant):
         asyncio.create_task(_run_broadcast(seg, text, media_id))
         await cb.answer()
 
-
     # ---- Прогресс депозита (обновление)
     @r.callback_query(F.data == "prog:dep")
     async def refresh_progress(cb: CallbackQuery):
@@ -1892,4 +1868,3 @@ async def run_child_bot(tenant: Tenant):
         pass
     finally:
         await bot.session.close()
-

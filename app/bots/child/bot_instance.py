@@ -11,6 +11,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import Command
 
 from sqlalchemy import func
 
@@ -426,19 +427,26 @@ class TenantGate(BaseMiddleware):
             db = SessionLocal()
             try:
                 t = db.query(Tenant).filter(Tenant.id == self.tenant_id).first()
-                status = t.status if t else "deleted"
+                status = t.status if t else TenantStatus.deleted
             finally:
                 db.close()
 
             if status != TenantStatus.active:
+                # аккуратно отвечаем, но НЕ падаем с исключением
                 if isinstance(event, Message):
                     await event.answer("⏸ Бот на паузе / удалён.")
                 elif isinstance(event, CallbackQuery):
                     await event.answer("⏸ Бот на паузе / удалён.", show_alert=False)
-                return
-        except Exception:
-            return
+                return  # реально блокируем только если не active
+
+        except Exception as e:
+            # раньше здесь был return — и это глушило всё.
+            # теперь логируем и ПРОПУСКАЕМ событие дальше.
+            print(f"[TenantGate] error: {e}")
+
+        # если всё ок или был сбой проверки — продолжаем обработку
         return await handler(event, data)
+
 
 class AdminForm(StatesGroup):
     waiting_support = State()
@@ -571,7 +579,7 @@ async def run_child_bot(tenant: Tenant):
     r.callback_query.outer_middleware(TenantGate(tenant.id))
 
     # -------- PUBLIC --------
-    @r.message(F.text == "/start")
+    @r.message(Command("start"))
     async def on_start(msg: Message):
         db = SessionLocal()
         try:
@@ -579,7 +587,6 @@ async def run_child_bot(tenant: Tenant):
                 User.tenant_id == tenant.id,
                 User.tg_user_id == msg.from_user.id
             ).first()
-
             if not user:
                 user = User(tenant_id=tenant.id, tg_user_id=msg.from_user.id)
                 db.add(user)
@@ -597,7 +604,6 @@ async def run_child_bot(tenant: Tenant):
                 return
 
             await render_lang_screen(bot, tenant, user, current_lang=None)
-
         finally:
             db.close()
 
@@ -702,11 +708,13 @@ async def run_child_bot(tenant: Tenant):
 
     # -------- ADMIN --------
     def owner_only(uid: int) -> bool:
-        return uid == tenant.owner_tg_id
+        return uid == tenant.owner_tg_id  # только владелец ТЕНАНТА
 
-    @r.message(F.text == "/admin")
+    @r.message(Command("admin"))
     async def admin_entry(msg: Message, state: FSMContext):
+        print(f"[child-admin] /admin from={msg.from_user.id} tenant_id={tenant.id} owner={tenant.owner_tg_id}")
         if not owner_only(msg.from_user.id):
+            await msg.answer("⛔️ Нет доступа (вы не владелец этого бота)")
             return
         await state.clear()
         await msg.answer("<b>Админ-панель</b>", reply_markup=kb_admin_main())

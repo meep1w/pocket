@@ -771,11 +771,17 @@ async def run_child_bot(tenant: Tenant):
 
     @r.callback_query(
         lambda c: (
-            c.data in {"adm:menu", "adm:links", "adm:pb", "adm:content", "adm:broadcast", "adm:stats", "adm:params", "adm:vip"}
-            or (c.data or "").startswith("adm:set:")
-            or (c.data or "").startswith("adm:vip:")
+                c.data in {"adm:menu", "adm:links", "adm:pb", "adm:content", "adm:broadcast", "adm:stats", "adm:params","adm:vip"}
+                or (c.data or "").startswith("adm:set:")
+                or (
+                    (c.data or "").startswith("adm:vip:")
+                    and not any((c.data or "").startswith(p) for p in (
+                    "adm:vip:do:",  # ← не перехватываем ручные постбэки
+                    "adm:vip:url:ask:",  # ← не перехватываем запрос VIP URL
+                ))
+                )
+             )
         )
-    )
     async def admin_router(cb: CallbackQuery, state: FSMContext):
         if not owner_only(cb.from_user.id):
             await cb.answer()

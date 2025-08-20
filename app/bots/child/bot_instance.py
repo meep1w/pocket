@@ -233,12 +233,20 @@ def tenant_miniapp_url(tenant: Tenant, user: User) -> str:
 
 
 # ------------------------------- КНОПКИ -------------------------------
+from aiogram.types import WebAppInfo
+
 def kb_main(locale: str, support_url: Optional[str], tenant: Tenant, user: User):
-    # ВСЕГДА callback, никаких web_app тут
-    signal_btn = InlineKeyboardButton(
-        text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
-        callback_data="menu:get",
-    )
+    # если доступ уже открыт — сразу открываем мини-апп
+    if user.step == UserStep.deposited:
+        signal_btn = InlineKeyboardButton(
+            text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
+            web_app=WebAppInfo(url=tenant_miniapp_url(tenant, user)),
+        )
+    else:
+        signal_btn = InlineKeyboardButton(
+            text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
+            callback_data="menu:get",
+        )
 
     if locale == "en":
         rows = [
@@ -259,6 +267,7 @@ def kb_main(locale: str, support_url: Optional[str], tenant: Tenant, user: User)
             [signal_btn],
         ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 
 def kb_back(locale: str):

@@ -249,40 +249,39 @@ def _normalize_support_url(u: Optional[str]) -> Optional[str]:
         return "https://" + u.lstrip("/")
     return None
 
-def kb_main(locale: str, support_url: Optional[str], tenant: Tenant, user: User, cfg: TenantConfig):
-    sup_url = _normalize_support_url(support_url)
-    has_access = (user.step == UserStep.deposited) or (not cfg.require_deposit and user.step >= UserStep.registered)
-
-    # если включена проверка подписки — оставляем callback; иначе при открытом доступе — web_app
-    if cfg.require_subscription or not has_access:
-        signal_btn = InlineKeyboardButton(
-            text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
-            callback_data="menu:get",
-        )
-    else:
+def kb_main(locale: str, support_url: Optional[str], tenant: Tenant, user: User, has_access: bool):
+    # если доступ есть — открываем мини-аппу прямо из главного меню
+    if has_access:
         signal_btn = InlineKeyboardButton(
             text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
             web_app=WebAppInfo(url=tenant_miniapp_url(tenant, user)),
         )
+    else:
+        signal_btn = InlineKeyboardButton(
+            text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
+            callback_data="menu:get",
+        )
 
     if locale == "en":
-        rows = [[InlineKeyboardButton(text="📘 Instruction", callback_data="menu:guide")]]
-        row2 = []
-        if sup_url:
-            row2.append(InlineKeyboardButton(text="🆘 Support", url=sup_url))
-        row2.append(InlineKeyboardButton(text="🌐 Change language", callback_data="menu:lang"))
-        rows.append(row2)
-        rows.append([signal_btn])
+        rows = [
+            [InlineKeyboardButton(text="📘 Instruction", callback_data="menu:guide")],
+            [
+                InlineKeyboardButton(text="🆘 Support", url=support_url or "https://t.me"),
+                InlineKeyboardButton(text="🌐 Change language", callback_data="menu:lang"),
+            ],
+            [signal_btn],
+        ]
     else:
-        rows = [[InlineKeyboardButton(text="📘 Инструкция", callback_data="menu:guide")]]
-        row2 = []
-        if sup_url:
-            row2.append(InlineKeyboardButton(text="🆘 Поддержка", url=sup_url))
-        row2.append(InlineKeyboardButton(text="🌐 Сменить язык", callback_data="menu:lang"))
-        rows.append(row2)
-        rows.append([signal_btn])
-
+        rows = [
+            [InlineKeyboardButton(text="📘 Инструкция", callback_data="menu:guide")],
+            [
+                InlineKeyboardButton(text="🆘 Поддержка", url=support_url or "https://t.me"),
+                InlineKeyboardButton(text="🌐 Сменить язык", callback_data="menu:lang"),
+            ],
+            [signal_btn],
+        ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 
 
@@ -355,13 +354,16 @@ async def render_main(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
     try:
         locale = user.lang or tenant.lang_default or "ru"
-        text, img = tget(db, tenant.id, "main", locale, default_text("main", locale))
         cfg = get_cfg(db, tenant.id)
-        kb = kb_main(locale, tenant.support_url, tenant, user, cfg)
+        has_access = (user.step == UserStep.deposited) or (not cfg.require_deposit and user.step >= UserStep.registered)
+
+        text, img = tget(db, tenant.id, "main", locale, default_text("main", locale))
+        kb = kb_main(locale, tenant.support_url, tenant, user, has_access)
         await send_screen(bot, user, "main", locale, text, kb, img)
         db.commit()
     finally:
         db.close()
+
 
 
 async def render_guide(bot: Bot, tenant: Tenant, user: User):
@@ -778,10 +780,23 @@ async def run_child_bot(tenant: Tenant):
                 User.tg_user_id == cb.from_user.id
             ).first()
             if not user:
-                await cb.answer();
+                await cb.answer()
                 return
 
-            await render_get(bot, tenant, user)  # всегда идём в render_get
+            locale = user.lang or tenant.lang_default or "ru"
+            cfg = get_cfg(db, tenant.id)
+            has_access = (user.step == UserStep.deposited) or (
+                        not cfg.require_deposit and user.step >= UserStep.registered)
+
+            if has_access:
+                # просто перерисуем главное меню (кнопка уже будет web_app)
+                await render_main(bot, tenant, user)
+                await cb.answer("Доступ уже открыт ✅" if locale == "ru" else "Access already unlocked ✅")
+                db.commit()
+                return
+
+            # иначе ведём по шагам (рег/депозит/подписка)
+            await render_get(bot, tenant, user)
             db.commit()
             await cb.answer()
         finally:

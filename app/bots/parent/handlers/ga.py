@@ -26,6 +26,7 @@ def _ga_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📋 Список клиентов", callback_data="ga:list:1")],
         [InlineKeyboardButton(text="📈 Общая статистика", callback_data="ga:agg")],
         [InlineKeyboardButton(text="🧹 Очистка БД", callback_data="ga:clean:1")],
+        [InlineKeyboardButton(text="🧨 Пурж удалённых", callback_data="ga:purge_deleted")],
     ])
 
 
@@ -307,17 +308,21 @@ async def ga_delc(cb: CallbackQuery):
         db.close()
 
 
-# ===== ОЧИСТКА БД КЛИЕНТА (без удаления клиента) =====
-# Список для выбора клиента
+# ===== ОЧИСТКА БД КЛИЕНТА (ЖЁСТКО, без удаления клиента) =====
 @router.callback_query(F.data.startswith("ga:clean:"))
 async def ga_clean_router(cb: CallbackQuery):
     if not _is_ga(cb.from_user.id):
         await cb.answer(); return
 
     parts = cb.data.split(":")
-    # ga:clean:1  |  ga:clean:pick:{id}  |  ga:clean:confirm:{id}  |  ga:clean:run:{id}
+    # Варианты:
+    # ga:clean:1
+    # ga:clean:pick:{id}
+    # ga:clean:confirm_hard:{id}
+    # ga:clean:run_hard:{id}
+
+    # Список клиентов с пагинацией
     if len(parts) == 3 and parts[2].isdigit():
-        # список с пагинацией
         page = int(parts[2])
         per = 10
         db = SessionLocal()
@@ -337,7 +342,6 @@ async def ga_clean_router(cb: CallbackQuery):
             for t in tenants:
                 rows.append([
                     InlineKeyboardButton(text="🧹 Выбрать", callback_data=f"ga:clean:pick:{t.id}"),
-                    InlineKeyboardButton(text="ℹ️", callback_data=f"ga:show:{t.id}"),
                 ])
             nav = []
             if page > 1:
@@ -355,8 +359,9 @@ async def ga_clean_router(cb: CallbackQuery):
             db.close()
         return
 
-    if len(parts) == 3 and parts[2].startswith("pick"):
-        tid = int(parts[2].split("pick")[1].strip(":") or parts[2].split(":")[1])
+    # Выбран конкретный клиент — показываем 2 кнопки (жёсткая очистка / главное меню)
+    if len(parts) == 4 and parts[2] == "pick":
+        tid = int(parts[3])
         db = SessionLocal()
         try:
             t = db.query(Tenant).filter(Tenant.id == tid).first()
@@ -364,51 +369,66 @@ async def ga_clean_router(cb: CallbackQuery):
                 await cb.answer("Не найден"); return
             txt = (
                 f"{t_line(db, t)}\n\n"
-                "Эта операция <b>очистит БД бота</b> (удалит всех пользователей и постбэки).\n"
-                "Настройки, ссылки и контент останутся нетронутыми."
+                "Эта операция выполнит <b>ЖЁСТКУЮ очистку БД бота</b>:\n"
+                "— удалит всех пользователей и постбэки;\n"
+                "— удалит контент экранов и конфиг бота;\n"
+                "— обнулит основные URL в карточке клиента (support/ref/deposit/miniapp/channel).\n\n"
+                "Клиент останется, но будет «как с нуля»."
             )
         finally:
             db.close()
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🧹 Очистить БД бота", callback_data=f"ga:clean:confirm:{tid}")],
-            [InlineKeyboardButton(text="⬅️ К списку", callback_data="ga:clean:1")],
+            [InlineKeyboardButton(text="🧹 Очистить БД бота (ЖЁСТКО)", callback_data=f"ga:clean:confirm_hard:{tid}")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="ga:home")],
         ])
         await _safe_edit(cb, txt, kb)
         await cb.answer()
         return
 
-    if len(parts) == 3 and parts[2].startswith("confirm"):
-        tid = int(parts[2].split(":")[1])
+    # Подтверждение жёсткой очистки
+    if len(parts) == 4 and parts[2] == "confirm_hard":
+        tid = int(parts[3])
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Подтвердить очистку", callback_data=f"ga:clean:run:{tid}")],
+            [InlineKeyboardButton(text="✅ Подтвердить ЖЁСТКУЮ очистку", callback_data=f"ga:clean:run_hard:{tid}")],
             [InlineKeyboardButton(text="↩️ Отмена", callback_data=f"ga:clean:pick:{tid}")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="ga:home")],
         ])
         await _safe_edit(cb,
-                         f"Вы уверены, что хотите очистить БД клиента #{tid}?\n"
-                         f"Будут удалены: пользователи и постбэки.", kb)
+                         f"Вы уверены, что хотите ЖЁСТКО очистить БД клиента #{tid}?\n"
+                         f"Будут удалены: пользователи, постбэки, контент, конфиг; URL-атрибуты клиента будут обнулены.",
+                         kb)
         await cb.answer()
         return
 
-    if len(parts) == 3 and parts[2].startswith("run"):
-        tid = int(parts[2].split(":")[1])
+    # Запуск жёсткой очистки
+    if len(parts) == 4 and parts[2] == "run_hard":
+        tid = int(parts[3])
         db = SessionLocal()
         try:
             t = db.query(Tenant).filter(Tenant.id == tid).first()
             if not t:
                 await _safe_edit(cb, "Клиент не найден.", _ga_menu_kb()); await cb.answer(); return
 
-            # Дозволительно при активном клиенте; просто чистим данные
+            # 1) Удаляем связанные записи
             db.query(Postback).filter(Postback.tenant_id == tid).delete(synchronize_session=False)
             db.query(User).filter(User.tenant_id == tid).delete(synchronize_session=False)
+            db.query(TenantText).filter(TenantText.tenant_id == tid).delete(synchronize_session=False)
+            db.query(TenantConfig).filter(TenantConfig.tenant_id == tid).delete(synchronize_session=False)
+
+            # 2) Обнуляем ключевые поля в самом тенанте
+            t.support_url = None
+            t.ref_link = None
+            t.deposit_link = None
+            t.miniapp_url = None
+            t.channel_url = None
+            # t.postback_secret = None  # если нужно тоже обнулять — раскомментируй
+
             db.commit()
 
             kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ К выбору клиента", callback_data="ga:clean:1")],
                 [InlineKeyboardButton(text="🏠 Главное меню", callback_data="ga:home")],
             ])
-            await _safe_edit(cb, f"✅ БД клиента #{tid} очищена (пользователи и постбэки).", kb)
+            await _safe_edit(cb, f"✅ ЖЁСТКАЯ очистка БД клиента #{tid} выполнена.", kb)
             await cb.answer("Готово")
         except Exception as e:
             db.rollback()
@@ -420,3 +440,77 @@ async def ga_clean_router(cb: CallbackQuery):
 
     # если что-то иное — просто домой
     await ga_home(cb)
+
+
+# ===== ПУРЖ УДАЛЁННЫХ КЛИЕНТОВ (Tenant.status == deleted) =====
+@router.callback_query(F.data == "ga:purge_deleted")
+async def ga_purge_deleted(cb: CallbackQuery):
+    if not _is_ga(cb.from_user.id):
+        await cb.answer(); return
+    db = SessionLocal()
+    try:
+        count = db.query(Tenant).filter(Tenant.status == TenantStatus.deleted).count()
+    finally:
+        db.close()
+
+    if count == 0:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="ga:home")]
+        ])
+        await _safe_edit(cb, "Удалённых клиентов нет — чистить нечего.", kb)
+        await cb.answer(); return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"✅ Подтвердить пурж ({count})", callback_data="ga:purge_deleted_run")],
+        [InlineKeyboardButton(text="↩️ Отмена", callback_data="ga:home")],
+    ])
+    await _safe_edit(cb,
+                     f"Найдено удалённых клиентов: <b>{count}</b>.\n"
+                     f"По подтверждению все они будут <u>полностью</u> удалены из БД вместе с данными.",
+                     kb)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "ga:purge_deleted_run")
+async def ga_purge_deleted_run(cb: CallbackQuery):
+    if not _is_ga(cb.from_user.id):
+        await cb.answer(); return
+
+    db = SessionLocal()
+    purged = 0
+    failed = 0
+    errors = []
+    try:
+        tenants = db.query(Tenant).filter(Tenant.status == TenantStatus.deleted).all()
+        for t in tenants:
+            try:
+                # Удаляем связанные записи
+                db.query(Postback).filter(Postback.tenant_id == t.id).delete(synchronize_session=False)
+                db.query(User).filter(User.tenant_id == t.id).delete(synchronize_session=False)
+                db.query(TenantText).filter(TenantText.tenant_id == t.id).delete(synchronize_session=False)
+                db.query(TenantConfig).filter(TenantConfig.tenant_id == t.id).delete(synchronize_session=False)
+                db.commit()
+
+                # Удаляем самого тенанта
+                db.delete(t)
+                db.commit()
+                purged += 1
+            except Exception as e:
+                db.rollback()
+                failed += 1
+                errors.append(f"#{t.id}: {e}")
+    finally:
+        db.close()
+
+    details = ""
+    if failed:
+        joined = "\n".join(errors[:10])
+        details = f"\n\nОшибки ({failed}):\n<code>{joined}</code>"
+        if failed > 10:
+            details += "\n…"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="ga:home")],
+    ])
+    await _safe_edit(cb, f"🧨 Пурж завершён.\nУспешно удалено: <b>{purged}</b>\nОшибок: <b>{failed}</b>{details}", kb)
+    await cb.answer("Готово")

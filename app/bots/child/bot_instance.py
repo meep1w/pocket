@@ -1509,19 +1509,136 @@ async def run_child_bot(tenant: Tenant):
         asyncio.create_task(_run_broadcast(seg, text, media_id))
         await cb.answer()
 
+    # ---- VIP: ручная регистрация (постбэк)
+    @r.callback_query(lambda c: c.data and c.data.startswith("adm:vip:do:reg:"))
+    async def vip_do_registration(cb: CallbackQuery):
+        if cb.from_user.id != tenant.owner_tg_id:
+            await cb.answer()
+            return
+        try:
+            uid = int(cb.data.split(":")[-1])
+        except Exception:
+            await cb.answer("Некорректный TG ID")
+            return
+
+        db = SessionLocal()
+        try:
+            u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
+            if not u:
+                await cb.answer("Юзер не найден")
+                return
+
+            # создаём постбэк регистрации
+            pb = Postback(
+                tenant_id=tenant.id,
+                event="registration",
+                click_id=str(uid),
+                trader_id=u.trader_id,
+                sum=0,
+                token_ok=True,
+                idempotency_key=f"adm:reg:{tenant.id}:{uid}",
+                raw_query="manual",
+            )
+            db.add(pb)
+
+            # обновим шаг, если ещё не продвинулись
+            if u.step in (UserStep.new, UserStep.asked_reg):
+                u.step = UserStep.registered
+
+            db.commit()
+        finally:
+            db.close()
+
+        try:
+            await cb.message.edit_text("✅ Регистрация засчитана.\n\nВыберите следующее действие.",
+                                       reply_markup=kb_admin_main())
+        except Exception:
+            pass
+        await cb.answer("OK")
+
+    # ---- VIP: ручной депозит (постбэк)
+    @r.callback_query(lambda c: c.data and c.data.startswith("adm:vip:do:dep:"))
+    async def vip_do_deposit(cb: CallbackQuery):
+        if cb.from_user.id != tenant.owner_tg_id:
+            await cb.answer()
+            return
+        try:
+            uid = int(cb.data.split(":")[-1])
+        except Exception:
+            await cb.answer("Некорректный TG ID")
+            return
+
+        db = SessionLocal()
+        try:
+            u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
+            if not u:
+                await cb.answer("Юзер не найден")
+                return
+
+            cfg = get_cfg(db, tenant.id)
+            amount = int(cfg.min_deposit or 50)
+
+            # создаём постбэк депозита
+            pb = Postback(
+                tenant_id=tenant.id,
+                event="deposit",
+                click_id=str(uid),
+                trader_id=u.trader_id,
+                sum=amount,
+                token_ok=True,
+                idempotency_key=f"adm:dep:{tenant.id}:{uid}:{amount}",
+                raw_query="manual",
+            )
+            db.add(pb)
+            db.commit()
+
+            # пересчитаем сумму депов, подтянем шаг/уведомление VIP
+            total = get_deposit_total(db, tenant.id, u)
+            if total >= cfg.min_deposit and u.step != UserStep.deposited:
+                u.step = UserStep.deposited
+
+            thr = int(getattr(cfg, "vip_threshold", 500) or 500)
+            if total >= thr and not getattr(u, "vip_notified", False):
+                try:
+                    locale = u.lang or tenant.lang_default or "ru"
+                    msg_txt = (
+                        "🎉 Вам выдан доступ к премиум-боту! Нажмите /start, чтобы активировать."
+                        if locale == "ru" else
+                        "🎉 You’re eligible for the premium bot! Send /start to activate."
+                    )
+                    await bot.send_message(uid, msg_txt)
+                except Exception:
+                    pass
+                u.vip_notified = True
+
+            db.commit()
+        finally:
+            db.close()
+
+        try:
+            await cb.message.edit_text("✅ Депозит засчитан.\n\nВыберите следующее действие.",
+                                       reply_markup=kb_admin_main())
+        except Exception:
+            pass
+        await cb.answer("OK")
+
     # ---- Прогресс депозита (обновление)
     @r.callback_query(F.data == "prog:dep")
     async def refresh_progress(cb: CallbackQuery):
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.tenant_id == tenant.id,
-                                         User.tg_user_id == cb.from_user.id).first()
+            user = db.query(User).filter(
+                User.tenant_id == tenant.id,
+                User.tg_user_id == cb.from_user.id
+            ).first()
             if not user:
                 await cb.answer()
                 return
+
             locale = user.lang or tenant.lang_default or "ru"
             cfg = get_cfg(db, tenant.id)
 
+            # проверка подписки
             if cfg.require_subscription:
                 ok = await is_user_subscribed(bot, tenant.channel_url or "", user.tg_user_id)
                 if not ok:
@@ -1529,6 +1646,7 @@ async def run_child_bot(tenant: Tenant):
                     await cb.answer("Сначала подпишитесь" if locale == "ru" else "Please subscribe first")
                     return
 
+            # доступ уже открыт
             if user.step == UserStep.deposited:
                 await render_main(bot, tenant, user)
                 await cb.answer("Доступ уже открыт ✅" if locale == "ru" else "Access already unlocked ✅")
@@ -1537,6 +1655,7 @@ async def run_child_bot(tenant: Tenant):
             dep_total = get_deposit_total(db, tenant.id, user)
             left = max(0, cfg.min_deposit - dep_total)
 
+            # VIP уведомление по динамическому порогу
             try:
                 if dep_total >= int(cfg.vip_threshold or 500) and not getattr(user, "vip_notified", False):
                     msg_txt = (
@@ -1561,7 +1680,8 @@ async def run_child_bot(tenant: Tenant):
             kb = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [InlineKeyboardButton(text="💳 Внести депозит" if locale == "ru" else "💳 Deposit", url=url)],
-                    [InlineKeyboardButton(text="🏠 Главное меню" if locale == "ru" else "🏠 Main menu", callback_data="menu:main")],
+                    [InlineKeyboardButton(text="🏠 Главное меню" if locale == "ru" else "🏠 Main menu",
+                                          callback_data="menu:main")],
                 ]
             )
 
@@ -1576,7 +1696,6 @@ async def run_child_bot(tenant: Tenant):
                 if "message is not modified" in msg:
                     await cb.answer("Без изменений" if locale == "ru" else "No changes")
                     return
-                # если нельзя отредактировать, отправим новое сообщение
                 await cb.message.answer(text, reply_markup=kb)
                 await cb.answer("Обновлено" if locale == "ru" else "Updated")
                 return
@@ -1586,112 +1705,18 @@ async def run_child_bot(tenant: Tenant):
         finally:
             db.close()
 
-        # ---- VIP: ручная регистрация (постбэк)
-        @r.callback_query(lambda c: c.data and c.data.startswith("adm:vip:do:reg:"))
-        async def vip_do_registration(cb: CallbackQuery):
-            if cb.from_user.id != tenant.owner_tg_id:
-                await cb.answer()
-                return
-            uid = int(cb.data.split(":")[-1])
-            db = SessionLocal()
-            try:
-                u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
-                if not u:
-                    await cb.answer("Юзер не найден")
-                    return
+    # === ВАЖНО: подключаем роутер и запускаем поллинг ОДИН РАЗ, в самом конце run_child_bot ===
+    dp.include_router(r)
 
-                pb = Postback(
-                    tenant_id=tenant.id,
-                    event="registration",
-                    click_id=str(uid),
-                    trader_id=u.trader_id,
-                    sum=0,
-                    token_ok=True,
-                    idempotency_key=f"adm:reg:{tenant.id}:{uid}",
-                    raw_query="manual",
-                )
-                db.add(pb)
-
-                if u.step in (UserStep.new, UserStep.asked_reg):
-                    u.step = UserStep.registered
-
-                db.commit()
-            finally:
-                db.close()
-
-            try:
-                await cb.message.edit_text("✅ Регистрация засчитана.\n\nВыберите следующее действие.",
-                                           reply_markup=kb_admin_main())
-            except Exception:
-                pass
-            await cb.answer("OK")
-
-        # ---- VIP: ручной депозит (постбэк)
-        @r.callback_query(lambda c: c.data and c.data.startswith("adm:vip:do:dep:"))
-        async def vip_do_deposit(cb: CallbackQuery):
-            if cb.from_user.id != tenant.owner_tg_id:
-                await cb.answer()
-                return
-            uid = int(cb.data.split(":")[-1])
-            db = SessionLocal()
-            try:
-                u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
-                if not u:
-                    await cb.answer("Юзер не найден")
-                    return
-
-                cfg = get_cfg(db, tenant.id)
-                amount = int(cfg.min_deposit or 50)
-
-                pb = Postback(
-                    tenant_id=tenant.id,
-                    event="deposit",
-                    click_id=str(uid),
-                    trader_id=u.trader_id,
-                    sum=amount,
-                    token_ok=True,
-                    idempotency_key=f"adm:dep:{tenant.id}:{uid}:{amount}",
-                    raw_query="manual",
-                )
-                db.add(pb)
-                db.commit()
-
-                total = get_deposit_total(db, tenant.id, u)
-                if total >= cfg.min_deposit and u.step != UserStep.deposited:
-                    u.step = UserStep.deposited
-
-                thr = int(getattr(cfg, "vip_threshold", 500) or 500)
-                if total >= thr and not getattr(u, "vip_notified", False):
-                    try:
-                        locale = u.lang or tenant.lang_default or "ru"
-                        msg_txt = (
-                            "🎉 Вам выдан доступ к премиум-боту! Напишите /start, чтобы активировать."
-                            if locale == "ru" else
-                            "🎉 You’re eligible for the premium bot! Send /start to activate."
-                        )
-                        await bot.send_message(uid, msg_txt)
-                    except Exception:
-                        pass
-                    u.vip_notified = True
-
-                db.commit()
-            finally:
-                db.close()
-
-            try:
-                await cb.message.edit_text("✅ Депозит засчитан.\n\nВыберите следующее действие.",
-                                           reply_markup=kb_admin_main())
-            except Exception:
-                pass
-            await cb.answer("OK")
-
-        # ---- ВКЛЮЧЕНИЕ РОУТЕРА И ЗАПУСК ПОЛЛИНГА
-        dp.include_router(r)
-
+    try:
+        # На всякий случай снимем вебхук перед поллингом, чтобы не было конфликта
         try:
-            await dp.start_polling(bot)
-        except asyncio.CancelledError:
+            await bot.delete_webhook(drop_pending_updates=True)
+        except Exception:
             pass
-        finally:
-            await bot.session.close()
+        await dp.start_polling(bot)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await bot.session.close()
 

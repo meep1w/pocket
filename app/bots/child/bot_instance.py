@@ -165,35 +165,45 @@ async def send_screen(bot, user, key: str, locale: str, text: str, kb, image_fil
     user.last_message_id = m.message_id
 
 # --------- подписька ----------
-def _parse_channel_identifier(url: str) -> Optional[str]:
+def _parse_channel_identifier(url: str):
     """
-    Приводим к виду '@username'. Инвайт-ссылки (+XXXX) не поддерживаются API.
-    Для приватных каналов с заявками нужно, чтобы у канала был публичный @username и бот был админом.
+    Возвращает либо '@username', либо int(-100...) для приватных каналов.
+    Возвращает None для инвайтов +... (их не проверить).
     """
     if not url:
         return None
-    u = url.strip()
+    u = str(url).strip()
+
+    # numeric chat_id
+    if u.startswith("-100") and u[4:].isdigit():
+        return int(u)
+
+    # чистый @username
     if u.startswith("@"):
         return u
+
+    # t.me/username
     if "t.me/" in u:
         tail = u.split("t.me/", 1)[1]
         tail = tail.split("?", 1)[0].strip("/")
-        # игнорируем инвайт (+...) и joinchat
-        if tail and not tail.startswith("+") and tail.lower() != "joinchat":
-            return "@" + tail
+        if not tail or tail.startswith("+") or tail.lower() == "joinchat":
+            return None  # инвайт — проверить нельзя
+        return "@" + tail if not tail.startswith("@") else tail
+
     return None
 
-async def is_user_subscribed(bot: Bot, channel: str, user_id: int) -> bool:
-    ident = _parse_channel_identifier(channel)
+
+async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
+    ident = _parse_channel_identifier(channel_url)
     if not ident:
-        # если канал не задан — считаем, что проход
-        return True
+        return False
     try:
         member = await bot.get_chat_member(ident, user_id)
-        return getattr(member, "status", "") in ("member", "administrator", "creator")
+        return member.status in ("member", "administrator", "creator")
     except Exception as e:
         print(f"[subscribe-check] error: {e}")
         return False
+
 
 def tenant_miniapp_url(tenant: Tenant, user: User) -> str:
     # 1) Персональная VIP-миниаппа

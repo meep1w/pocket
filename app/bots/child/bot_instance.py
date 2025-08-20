@@ -249,21 +249,17 @@ def _normalize_support_url(u: Optional[str]) -> Optional[str]:
         return "https://" + u.lstrip("/")
     return None
 
-
 def kb_main(locale: str, support_url: Optional[str], tenant: Tenant, user: User, cfg: TenantConfig):
     sup_url = _normalize_support_url(support_url)
-
-    # есть ли доступ (не учитываем подписку здесь — её проверит on_get при необходимости)
     has_access = (user.step == UserStep.deposited) or (not cfg.require_deposit and user.step >= UserStep.registered)
 
-    # если включена проверка подписки — оставляем callback, чтобы не обходить чек
+    # если включена проверка подписки — оставляем callback; иначе при открытом доступе — web_app
     if cfg.require_subscription or not has_access:
         signal_btn = InlineKeyboardButton(
             text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
             callback_data="menu:get",
         )
     else:
-        # доступ открыт — сразу web_app (VIP подставится в tenant_miniapp_url)
         signal_btn = InlineKeyboardButton(
             text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
             web_app=WebAppInfo(url=tenant_miniapp_url(tenant, user)),
@@ -785,8 +781,7 @@ async def run_child_bot(tenant: Tenant):
                 await cb.answer();
                 return
 
-            # ВСЕГДА идём через render_get (он сам покажет unlocked с web_app)
-            await render_get(bot, tenant, user)
+            await render_get(bot, tenant, user)  # всегда идём в render_get
             db.commit()
             await cb.answer()
         finally:

@@ -1080,6 +1080,161 @@ async def run_child_bot(tenant: Tenant):
             await cb.answer()
             return
 
+    # ---------- ADMIN: ручные постбэки (VIP) ----------
+
+    def _owner(cb: CallbackQuery) -> bool:
+        return cb.from_user.id == tenant.owner_tg_id
+
+    def _kb_back_to_vip():
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip")]
+        ])
+
+    @r.callback_query(F.data == "adm:vip:reg")
+    async def vip_list_for_registration(cb: CallbackQuery):
+        if not _owner(cb):
+            await cb.answer();
+            return
+        db = SessionLocal()
+        try:
+            users = db.query(User).filter(User.tenant_id == tenant.id).all()
+            rows = []
+            for u in users[:50]:
+                rows.append(
+                    [InlineKeyboardButton(text=str(u.tg_user_id), callback_data=f"adm:vip:do:reg:{u.tg_user_id}")])
+            if not rows:
+                rows = [[InlineKeyboardButton(text="Нет пользователей", callback_data="adm:vip")]]
+            rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip")])
+            kb = InlineKeyboardMarkup(inline_keyboard=rows)
+        finally:
+            db.close()
+        await cb.message.edit_text("Выберите пользователя для РЕГИСТРАЦИИ (ручной постбэк):", reply_markup=kb)
+        await cb.answer()
+
+    @r.callback_query(lambda c: c.data and c.data.startswith("adm:vip:do:reg:"))
+    async def vip_do_registration(cb: CallbackQuery):
+        if not _owner(cb):
+            await cb.answer();
+            return
+        uid = int(cb.data.split(":")[-1])
+        db = SessionLocal()
+        try:
+            u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
+            if not u:
+                await cb.answer("Юзер не найден");
+                return
+
+            # создаём запись постбэка «registration»
+            pb = Postback(
+                tenant_id=tenant.id,
+                event="registration",
+                click_id=str(uid),
+                trader_id=u.trader_id,
+                sum=0,
+                token_ok=True,
+                idempotency_key=f"adm:reg:{tenant.id}:{uid}",
+                raw_query="manual",
+            )
+            db.add(pb)
+
+            # переводим юзера на шаг «зарегистрирован»
+            if u.step in (UserStep.new, UserStep.asked_reg):
+                u.step = UserStep.registered
+
+            db.commit()
+        finally:
+            db.close()
+
+        # подтверждение
+        try:
+            await cb.message.edit_text("✅ Регистрация засчитана.\n\nВыберите следующее действие.",
+                                       reply_markup=kb_admin_main())
+        except Exception:
+            pass
+        await cb.answer("OK")
+
+    @r.callback_query(F.data == "adm:vip:dep")
+    async def vip_list_for_deposit(cb: CallbackQuery):
+        if not _owner(cb):
+            await cb.answer();
+            return
+        db = SessionLocal()
+        try:
+            users = db.query(User).filter(User.tenant_id == tenant.id).all()
+            rows = []
+            for u in users[:50]:
+                rows.append(
+                    [InlineKeyboardButton(text=str(u.tg_user_id), callback_data=f"adm:vip:do:dep:{u.tg_user_id}")])
+            if not rows:
+                rows = [[InlineKeyboardButton(text="Нет пользователей", callback_data="adm:vip")]]
+            rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip")])
+            kb = InlineKeyboardMarkup(inline_keyboard=rows)
+        finally:
+            db.close()
+        await cb.message.edit_text("Выберите пользователя для ДЕПОЗИТА (ручной постбэк):", reply_markup=kb)
+        await cb.answer()
+
+    @r.callback_query(lambda c: c.data and c.data.startswith("adm:vip:do:dep:"))
+    async def vip_do_deposit(cb: CallbackQuery):
+        if not _owner(cb):
+            await cb.answer();
+            return
+        uid = int(cb.data.split(":")[-1])
+        db = SessionLocal()
+        try:
+            u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
+            if not u:
+                await cb.answer("Юзер не найден");
+                return
+
+            cfg = get_cfg(db, tenant.id)
+            amount = int(cfg.min_deposit or 50)
+
+            # создаём запись постбэка «deposit»
+            pb = Postback(
+                tenant_id=tenant.id,
+                event="deposit",
+                click_id=str(uid),
+                trader_id=u.trader_id,
+                sum=amount,
+                token_ok=True,
+                idempotency_key=f"adm:dep:{tenant.id}:{uid}:{amount}",
+                raw_query="manual",
+            )
+            db.add(pb)
+            db.commit()
+
+            # обновляем прогресс и шаг
+            total = get_deposit_total(db, tenant.id, u)
+            if total >= cfg.min_deposit and u.step != UserStep.deposited:
+                u.step = UserStep.deposited
+
+            # VIP уведомление при достижении порога
+            thr = int(getattr(cfg, "vip_threshold", 500) or 500)
+            if total >= thr and not getattr(u, "vip_notified", False):
+                try:
+                    locale = u.lang or tenant.lang_default or "ru"
+                    msg_txt = (
+                        "🎉 Вам выдан доступ к премиум-боту! Напишите /start, чтобы активировать."
+                        if locale == "ru" else
+                        "🎉 You’re eligible for the premium bot! Send /start to activate."
+                    )
+                    await bot.send_message(uid, msg_txt)
+                except Exception:
+                    pass
+                u.vip_notified = True
+
+            db.commit()
+        finally:
+            db.close()
+
+        try:
+            await cb.message.edit_text("✅ Депозит засчитан.\n\nВыберите следующее действие.",
+                                       reply_markup=kb_admin_main())
+        except Exception:
+            pass
+        await cb.answer("OK")
+
     # ---- Admin: ввод ссылок
     @r.message(AdminForm.waiting_support)
     async def on_support_input(msg: Message, state: FSMContext):

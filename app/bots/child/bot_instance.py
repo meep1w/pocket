@@ -432,20 +432,17 @@ class TenantGate(BaseMiddleware):
                 db.close()
 
             if status != TenantStatus.active:
-                # аккуратно отвечаем, но НЕ падаем с исключением
                 if isinstance(event, Message):
                     await event.answer("⏸ Бот на паузе / удалён.")
                 elif isinstance(event, CallbackQuery):
                     await event.answer("⏸ Бот на паузе / удалён.", show_alert=False)
-                return  # реально блокируем только если не active
-
+                return
         except Exception as e:
-            # раньше здесь был return — и это глушило всё.
-            # теперь логируем и ПРОПУСКАЕМ событие дальше.
+            # ВАЖНО: не возвращаемся! логируем и пропускаем дальше
             print(f"[TenantGate] error: {e}")
 
-        # если всё ок или был сбой проверки — продолжаем обработку
         return await handler(event, data)
+
 
 
 class AdminForm(StatesGroup):

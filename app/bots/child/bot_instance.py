@@ -212,16 +212,12 @@ def tenant_miniapp_url(tenant: Tenant, user: User) -> str:
 
 # ------------------------------- КНОПКИ -------------------------------
 def kb_main(locale: str, support_url: Optional[str], tenant: Tenant, user: User):
-    if user.step == UserStep.deposited:
-        signal_btn = InlineKeyboardButton(
-            text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
-            web_app=WebAppInfo(url=tenant_miniapp_url(tenant, user)),
-        )
-    else:
-        signal_btn = InlineKeyboardButton(
-            text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
-            callback_data="menu:get",
-        )
+    # ВСЕГДА callback, никаких web_app тут
+    signal_btn = InlineKeyboardButton(
+        text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
+        callback_data="menu:get",
+    )
+
     if locale == "en":
         rows = [
             [InlineKeyboardButton(text="📘 Instruction", callback_data="menu:guide")],
@@ -241,6 +237,7 @@ def kb_main(locale: str, support_url: Optional[str], tenant: Tenant, user: User)
             [signal_btn],
         ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 def kb_back(locale: str):
     txt = "🏠 Main menu" if locale == "en" else "🏠 Главное меню"
@@ -687,11 +684,15 @@ async def run_child_bot(tenant: Tenant):
     async def on_get(cb: CallbackQuery):
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.tenant_id == tenant.id,
-                                         User.tg_user_id == cb.from_user.id).first()
+            user = db.query(User).filter(
+                User.tenant_id == tenant.id,
+                User.tg_user_id == cb.from_user.id
+            ).first()
             if not user:
+                await cb.answer()
                 return
 
+            # если доступ уже открыт — НЕ пересылаем «unlocked», а просто перерисовываем главное
             if user.step == UserStep.deposited:
                 await render_main(bot, tenant, user)
                 await cb.answer()

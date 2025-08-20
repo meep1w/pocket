@@ -20,6 +20,7 @@ class Settings:
     project_name: str
     service_host: str
     miniapp_url: str
+    vip_miniapp_url: str | None = None
     timezone: str
     private_channel_id: int
     ga_admin_ids: List[int]

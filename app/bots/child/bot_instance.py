@@ -215,11 +215,21 @@ async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
 
 
 def tenant_miniapp_url(tenant: Tenant, user: User) -> str:
+    # 1) Персональная VIP-мини-аппа (если админ задал руками)
     if getattr(user, "vip_miniapp_url", None):
         base = user.vip_miniapp_url.rstrip("/")
         return f"{base}?tenant_id={tenant.id}&uid={user.tg_user_id}"
+
+    # 2) Стоковая VIP-мини-аппа из ENV — только если пользователь VIP
+    is_vip = bool(getattr(user, "is_vip", False))
+    if is_vip and settings.vip_miniapp_url:
+        base = settings.vip_miniapp_url.rstrip("/")
+        return f"{base}?tenant_id={tenant.id}&uid={user.tg_user_id}"
+
+    # 3) Обычная мини-аппа (пер-ботовая или из ENV)
     base = (tenant.miniapp_url or settings.miniapp_url).rstrip("/")
     return f"{base}?tenant_id={tenant.id}&uid={user.tg_user_id}"
+
 
 # ------------------------------- КНОПКИ -------------------------------
 def kb_main(locale: str, support_url: Optional[str], tenant: Tenant, user: User):

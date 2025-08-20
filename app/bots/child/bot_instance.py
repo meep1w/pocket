@@ -235,38 +235,48 @@ def tenant_miniapp_url(tenant: Tenant, user: User) -> str:
 # ------------------------------- КНОПКИ -------------------------------
 from aiogram.types import WebAppInfo
 
+def _normalize_support_url(u: Optional[str]) -> Optional[str]:
+    if not u:
+        return None
+    u = u.strip()
+    if not u:
+        return None
+    if u.startswith("@"):
+        return f"https://t.me/{u[1:]}"
+    if u.startswith("http://") or u.startswith("https://"):
+        return u
+    if u.startswith("t.me/") or "t.me/" in u:
+        return "https://" + u.lstrip("/")
+    return None
+
+
 def kb_main(locale: str, support_url: Optional[str], tenant: Tenant, user: User):
-    # если доступ уже открыт — сразу открываем мини-апп
-    if user.step == UserStep.deposited:
-        signal_btn = InlineKeyboardButton(
-            text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
-            web_app=WebAppInfo(url=tenant_miniapp_url(tenant, user)),
-        )
-    else:
-        signal_btn = InlineKeyboardButton(
-            text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
-            callback_data="menu:get",
-        )
+    signal_btn = InlineKeyboardButton(
+        text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
+        callback_data="menu:get",
+    )
+
+    sup_url = _normalize_support_url(support_url)
 
     if locale == "en":
-        rows = [
-            [InlineKeyboardButton(text="📘 Instruction", callback_data="menu:guide")],
-            [
-                InlineKeyboardButton(text="🆘 Support", url=support_url or "about:blank"),
-                InlineKeyboardButton(text="🌐 Change language", callback_data="menu:lang"),
-            ],
-            [signal_btn],
-        ]
+        rows = [[InlineKeyboardButton(text="📘 Instruction", callback_data="menu:guide")]]
+        row2 = []
+        if sup_url:
+            row2.append(InlineKeyboardButton(text="🆘 Support", url=sup_url))
+        row2.append(InlineKeyboardButton(text="🌐 Change language", callback_data="menu:lang"))
+        rows.append(row2)
+        rows.append([signal_btn])
     else:
-        rows = [
-            [InlineKeyboardButton(text="📘 Инструкция", callback_data="menu:guide")],
-            [
-                InlineKeyboardButton(text="🆘 Поддержка", url=support_url or "about:blank"),
-                InlineKeyboardButton(text="🌐 Сменить язык", callback_data="menu:lang"),
-            ],
-            [signal_btn],
-        ]
+        rows = [[InlineKeyboardButton(text="📘 Инструкция", callback_data="menu:guide")]]
+        row2 = []
+        if sup_url:
+            row2.append(InlineKeyboardButton(text="🆘 Поддержка", url=sup_url))
+        row2.append(InlineKeyboardButton(text="🌐 Сменить язык", callback_data="menu:lang"))
+        rows.append(row2)
+        rows.append([signal_btn])
+
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 
 

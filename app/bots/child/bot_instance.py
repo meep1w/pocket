@@ -600,19 +600,31 @@ async def run_child_bot(tenant: Tenant):
     async def on_start(msg: Message):
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.tenant_id == tenant.id,
-                                         User.tg_user_id == msg.from_user.id).first()
+            user = db.query(User).filter(
+                User.tenant_id == tenant.id,
+                User.tg_user_id == msg.from_user.id
+            ).first()
+
             if not user:
                 user = User(tenant_id=tenant.id, tg_user_id=msg.from_user.id)
                 db.add(user)
-                db.commit()
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    # кто-то другой уже создал запись — возьмем её
+                    user = db.query(User).filter(
+                        User.tenant_id == tenant.id,
+                        User.tg_user_id == msg.from_user.id
+                    ).first()
 
+            # дальше обычная логика
             if user.lang:
                 await render_main(bot, tenant, user)
-                db.commit()
                 return
 
-            await render_lang_screen(bot, tenant, user, None)
+            await render_lang_screen(bot, tenant, user, current_lang=None)
+
         finally:
             db.close()
 

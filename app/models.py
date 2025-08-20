@@ -29,13 +29,13 @@ class Tenant(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     lang_default = Column(String, default="ru")
     support_url = Column(String, default="https://t.me/your_support")
-    # NEW: ссылка на канал для проверки подписки
-    channel_url = Column(String, nullable=True)
     ref_link = Column(String, default="https://pocketoption.com/ru/registration/")
     postback_secret = Column(String, default="")  # if per-tenant secrets are enabled
     ga_notes = Column(Text, default="")
     deposit_link = Column(String, nullable=True)
     miniapp_url = Column(String, nullable=True)
+    # NEW: ссылка на канал для проверки подписки (публичный @username или https://t.me/username).
+    channel_url = Column(String, nullable=True)
 
     texts = relationship("TenantText", back_populates="tenant", cascade="all, delete-orphan")
     users = relationship("User", back_populates="tenant", cascade="all, delete-orphan")
@@ -46,8 +46,7 @@ class TenantText(Base):
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
     locale = Column(String, nullable=False)  # ru|en
-    # расширили список: main|guide|subscribe|step1|step2|unlocked
-    key = Column(String, nullable=False)
+    key = Column(String, nullable=False)     # lang|main|guide|subscribe|step1|step2|unlocked
     text = Column(Text, default="")
     image_file_id = Column(String, default=None)
 
@@ -67,6 +66,11 @@ class User(Base):
     last_message_id = Column(Integer, default=None)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+    # NEW: VIP
+    is_vip = Column(Boolean, default=False)              # флаг VIP
+    vip_miniapp_url = Column(String, default=None)       # персональная VIP мини-аппа (если нужна для конкретного юзера)
+    vip_notified = Column(Boolean, default=False)        # чтобы не спамить уведомлением при >= $500
 
     tenant = relationship("Tenant", back_populates="users")
 
@@ -118,11 +122,10 @@ class StatsDaily(Base):
 
 class TenantConfig(Base):
     __tablename__ = "tenant_configs"
-
     tenant_id = Column(Integer, ForeignKey("tenants.id"), primary_key=True)
     require_deposit = Column(Boolean, nullable=False, default=True)
     min_deposit = Column(Integer, nullable=False, default=50)
-    # NEW: включить/выключить проверку подписки
+    # NEW: флаг проверки подписки
     require_subscription = Column(Boolean, nullable=False, default=False)
 
     tenant = relationship("Tenant", backref="cfg", uselist=False)

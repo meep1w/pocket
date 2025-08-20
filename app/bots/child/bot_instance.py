@@ -983,11 +983,86 @@ async def run_child_bot(tenant: Tenant):
 
         if action.startswith("vip:miniapp:set:"):
             uid = int(action.split(":")[-1])
+            db = SessionLocal()
+            try:
+                u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
+                if not u:
+                    await cb.answer("Юзер не найден");
+                    db.close();
+                    return
+                # Текущее состояние
+                has_vip = bool(u.is_vip)
+                has_custom = bool(u.vip_miniapp_url)
+            finally:
+                db.close()
+
+            # Кнопки: выдать VIP из ENV, задать кастомный, вернуть стоковую обычную
+            rows = [
+                [InlineKeyboardButton(text="🟣 Выдать VIP-мини-апп (ENV)", callback_data=f"adm:vip:miniapp:env:{uid}")],
+                [InlineKeyboardButton(text="✏️ Задать кастомный VIP URL", callback_data=f"adm:vip:miniapp:ask:{uid}")],
+                [InlineKeyboardButton(text="↩️ Вернуть стоковую мини-апп",
+                                      callback_data=f"adm:vip:miniapp:stock:{uid}")],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip:miniapp")],
+            ]
+            # Можно подсветить текущее состояние в тексте
+            status = []
+            if has_vip: status.append("VIP=✅")
+            if has_custom: status.append("Custom URL=✅")
+            if not status: status.append("обычная мини-апп")
+            title = f"Пользователь <code>{uid}</code>\nТекущее: " + ", ".join(status)
+
+            await cb.message.edit_text(title, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+            await cb.answer();
+            return
+
+        if action.startswith("vip:miniapp:env:"):
+            uid = int(action.split(":")[-1])
+            db = SessionLocal()
+            try:
+                u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
+                if not u:
+                    await cb.answer("Юзер не найден");
+                    db.close();
+                    return
+                u.is_vip = True  # включаем VIP
+                u.vip_miniapp_url = None  # пусть берётся из ENV (settings.vip_miniapp_url)
+                db.commit()
+            finally:
+                db.close()
+            await cb.message.edit_text(
+                "✅ Назначена VIP-мини-апп из ENV. Пользователь увидит VIP при «Получить сигнал».",
+                reply_markup=kb_admin_main())
+            await cb.answer("Готово");
+            return
+
+        if action.startswith("vip:miniapp:ask:"):
+            uid = int(action.split(":")[-1])
             await state.update_data(vip_user_id=uid)
             await state.set_state(AdminForm.vip_wait_miniapp_url)
-            await cb.message.edit_text(f"Пришлите VIP Web-app URL для <code>{uid}</code> одним сообщением.\n\n"
-                                       f"Чтобы очистить, пришлите «-» (дефис).")
-            await cb.answer(); return
+            await cb.message.edit_text(
+                f"Пришлите VIP Web-app URL для <code>{uid}</code> одним сообщением.\n"
+                f"Чтобы очистить, пришлите «-».")
+            await cb.answer();
+            return
+
+        if action.startswith("vip:miniapp:stock:"):
+            uid = int(action.split(":")[-1])
+            db = SessionLocal()
+            try:
+                u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
+                if not u:
+                    await cb.answer("Юзер не найден");
+                    db.close();
+                    return
+                u.vip_miniapp_url = None  # убираем кастом
+                u.is_vip = False  # выключаем VIP → откроется обычная мини-аппа (tenant/ENV)
+                db.commit()
+            finally:
+                db.close()
+            await cb.message.edit_text("↩️ Вернул обычную мини-апп. Теперь «Получить сигнал» открывает не-VIP версию.",
+                                       reply_markup=kb_admin_main())
+            await cb.answer("Готово");
+            return
 
         if action == "vip:byid":
             await state.set_state(AdminForm.vip_wait_user_id)

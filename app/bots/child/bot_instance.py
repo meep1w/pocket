@@ -1084,70 +1084,114 @@ async def run_child_bot(tenant: Tenant):
     # ---------- ADMIN: ручные постбэки (VIP) ----------
     # ---------- ADMIN: ручные постбэки (VIP) ----------
 
-    # ---- РЕГИСТРАЦИЯ
+    # ---- РЕГИСТРАЦИЯ (ручной постбэк)
     @r.callback_query(lambda c: c.data and c.data.startswith("adm:vip:do:reg:"))
     async def vip_do_registration(cb: CallbackQuery):
-        tg_user_id = int(cb.data.split(":")[-1])
+        if cb.from_user.id != tenant.owner_tg_id:
+            await cb.answer()
+            return
+        try:
+            uid = int(cb.data.split(":")[-1])
+        except Exception:
+            await cb.answer("Некорректный UID")
+            return
+
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.tg_user_id == tg_user_id, User.tenant_id == cb.message.chat.id).first()
-            if not user:
-                await cb.answer("❌ Пользователь не найден", show_alert=True)
+            u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
+            if not u:
+                await cb.answer("Юзер не найден", show_alert=True)
                 return
 
-            # создаём ручной постбэк "registration"
             pb = Postback(
-                tenant_id=user.tenant_id,
-                tg_user_id=user.tg_user_id,
-                click_id=user.click_id,
-                trader_id=user.trader_id,
-                type="registration",
+                tenant_id=tenant.id,
+                event="registration",
+                click_id=str(uid),
+                trader_id=u.trader_id,
                 sum=0,
+                token_ok=True,
+                idempotency_key=f"adm:reg:{tenant.id}:{uid}",
+                raw_query="manual",
             )
             db.add(pb)
-            db.commit()
 
-            await cb.answer("✅ Ручной постбэк: РЕГИСТРАЦИЯ", show_alert=True)
-            await cb.message.edit_text("✔ Ручной постбэк регистрации добавлен")
+            if u.step in (UserStep.new, UserStep.asked_reg):
+                u.step = UserStep.registered
+
+            db.commit()
         finally:
             db.close()
 
-    # ---- ДЕПОЗИТ
+        try:
+            await cb.message.edit_text("✅ Регистрация засчитана.\n\nВыберите следующее действие.",
+                                       reply_markup=kb_admin_main())
+        except Exception:
+            pass
+        await cb.answer("OK")
+
+    # ---- ДЕПОЗИТ (ручной постбэк)
     @r.callback_query(lambda c: c.data and c.data.startswith("adm:vip:do:dep:"))
     async def vip_do_deposit(cb: CallbackQuery):
-        tg_user_id = int(cb.data.split(":")[-1])
+        if cb.from_user.id != tenant.owner_tg_id:
+            await cb.answer()
+            return
+        try:
+            uid = int(cb.data.split(":")[-1])
+        except Exception:
+            await cb.answer("Некорректный UID")
+            return
+
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.tg_user_id == tg_user_id, User.tenant_id == cb.message.chat.id).first()
-            if not user:
-                await cb.answer("❌ Пользователь не найден", show_alert=True)
+            u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
+            if not u:
+                await cb.answer("Юзер не найден", show_alert=True)
                 return
 
-            # создаём ручной постбэк "deposit"
+            cfg = get_cfg(db, tenant.id)
+            amount = int(cfg.min_deposit or 50)
+
             pb = Postback(
-                tenant_id=user.tenant_id,
-                tg_user_id=user.tg_user_id,
-                click_id=user.click_id,
-                trader_id=user.trader_id,
-                type="deposit",
-                sum=50,  # можно поставить фикс 50 или запросить сумму
+                tenant_id=tenant.id,
+                event="deposit",
+                click_id=str(uid),
+                trader_id=u.trader_id,
+                sum=amount,
+                token_ok=True,
+                idempotency_key=f"adm:dep:{tenant.id}:{uid}:{amount}",
+                raw_query="manual",
             )
             db.add(pb)
             db.commit()
 
-            await cb.answer("✅ Ручной постбэк: ДЕПОЗИТ", show_alert=True)
-            await cb.message.edit_text("✔ Ручной постбэк депозита добавлен")
+            total = get_deposit_total(db, tenant.id, u)
+            if total >= cfg.min_deposit and u.step != UserStep.deposited:
+                u.step = UserStep.deposited
+
+            thr = int(getattr(cfg, "vip_threshold", 500) or 500)
+            if total >= thr and not getattr(u, "vip_notified", False):
+                try:
+                    locale = u.lang or tenant.lang_default or "ru"
+                    msg_txt = (
+                        "🎉 Вам выдан доступ к премиум-боту! Напишите /start, чтобы активировать."
+                        if locale == "ru" else
+                        "🎉 You’re eligible for the premium bot! Send /start to activate."
+                    )
+                    await bot.send_message(uid, msg_txt)
+                except Exception:
+                    pass
+                u.vip_notified = True
+
+            db.commit()
         finally:
             db.close()
 
-    def _owner(cb: CallbackQuery) -> bool:
-        return cb.from_user.id == tenant.owner_tg_id
-
-    def _kb_back_to_vip():
-        return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip")]
-        ])
-
+        try:
+            await cb.message.edit_text("✅ Депозит засчитан.\n\nВыберите следующее действие.",
+                                       reply_markup=kb_admin_main())
+        except Exception:
+            pass
+        await cb.answer("OK")
 
     # ---- Admin: ввод ссылок
     @r.message(AdminForm.waiting_support)

@@ -166,39 +166,40 @@ async def send_screen(bot, user, key: str, locale: str, text: str, kb, image_fil
 
 # --------- подписька ----------
 def _parse_channel_identifier(url: str):
-    """
-    Возвращает либо '@username', либо int(-100...) для приватных каналов.
-    Возвращает None для инвайтов +... (их не проверить).
-    """
     if not url:
+        print("[sub] no channel_url provided")
         return None
     u = str(url).strip()
-
     # numeric chat_id
     if u.startswith("-100") and u[4:].isdigit():
-        return int(u)
-
-    # чистый @username
+        ident = int(u)
+        print(f"[sub] parsed chat_id={ident}")
+        return ident
     if u.startswith("@"):
+        print(f"[sub] parsed username={u}")
         return u
-
-    # t.me/username
     if "t.me/" in u:
         tail = u.split("t.me/", 1)[1]
         tail = tail.split("?", 1)[0].strip("/")
         if not tail or tail.startswith("+") or tail.lower() == "joinchat":
-            return None  # инвайт — проверить нельзя
-        return "@" + tail if not tail.startswith("@") else tail
-
+            print(f"[sub] invite or joinchat link, cannot check: {u}")
+            return None
+        ident = "@" + tail if not tail.startswith("@") else tail
+        print(f"[sub] parsed from url -> {ident}")
+        return ident
+    print(f"[sub] unknown format: {u}")
     return None
 
 
 async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
     ident = _parse_channel_identifier(channel_url)
     if not ident:
+        print(f"[sub] ident is None for channel_url='{channel_url}'")
         return False
     try:
+        print(f"[sub] get_chat_member ident={ident} user_id={user_id}")
         member = await bot.get_chat_member(ident, user_id)
+        print(f"[sub] result status={getattr(member, 'status', None)}")
         return member.status in ("member", "administrator", "creator")
     except Exception as e:
         print(f"[subscribe-check] error: {e}")
@@ -342,6 +343,7 @@ async def render_get(bot: Bot, tenant: Tenant, user: User):
     try:
         locale = user.lang or tenant.lang_default or "ru"
         cfg = get_cfg(db, tenant.id)
+
 
         # 0) Сначала подписка
         if cfg.require_subscription:

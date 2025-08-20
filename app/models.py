@@ -21,26 +21,20 @@ class UserStep(str, enum.Enum):
 
 class Tenant(Base):
     __tablename__ = "tenants"
-
     id = Column(Integer, primary_key=True)
     owner_tg_id = Column(Integer, index=True, nullable=False)
     child_bot_token = Column(String, nullable=False)
     child_bot_username = Column(String, nullable=False)
-
     status = Column(Enum(TenantStatus), default=TenantStatus.active, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-
     lang_default = Column(String, default="ru")
     support_url = Column(String, default="https://t.me/your_support")
     ref_link = Column(String, default="https://pocketoption.com/ru/registration/")
     postback_secret = Column(String, default="")
     ga_notes = Column(Text, default="")
-
     deposit_link = Column(String, nullable=True)
     miniapp_url = Column(String, nullable=True)
-
-    # Для проверки подписки:
-    channel_url = Column(String, nullable=True)  # @username | https://t.me/username | -100123...
+    channel_url = Column(String, nullable=True)
 
     texts = relationship("TenantText", back_populates="tenant", cascade="all, delete-orphan")
     users = relationship("User", back_populates="tenant", cascade="all, delete-orphan")
@@ -48,11 +42,10 @@ class Tenant(Base):
 
 class TenantText(Base):
     __tablename__ = "tenant_texts"
-
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
     locale = Column(String, nullable=False)  # ru|en
-    key = Column(String, nullable=False)     # main|guide|subscribe|step1|step2|unlocked
+    key = Column(String, nullable=False)     # lang|main|guide|subscribe|step1|step2|unlocked
     text = Column(Text, default="")
     image_file_id = Column(String, default=None)
 
@@ -62,32 +55,27 @@ class TenantText(Base):
 
 class User(Base):
     __tablename__ = "users"
-
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
     tg_user_id = Column(Integer, index=True, nullable=True)
     lang = Column(String, default=None)  # ru|en
     step = Column(Enum(UserStep), default=UserStep.new, nullable=False)
-
     click_id = Column(String, default=None)
     trader_id = Column(String, default=None)
-
     last_message_id = Column(Integer, default=None)
-
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
-    # VIP:
-    is_vip = Column(Boolean, nullable=False, default=False)
-    vip_miniapp_url = Column(Text, default=None)
-    vip_notified = Column(Boolean, nullable=False, default=False)
+    # VIP
+    is_vip = Column(Boolean, default=False)
+    vip_miniapp_url = Column(String, default=None)
+    vip_notified = Column(Boolean, default=False)
 
     tenant = relationship("Tenant", back_populates="users")
 
 
 class Postback(Base):
     __tablename__ = "postbacks"
-
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, index=True, nullable=False)
     event = Column(String, nullable=False)  # registration|deposit
@@ -102,7 +90,6 @@ class Postback(Base):
 
 class Broadcast(Base):
     __tablename__ = "broadcasts"
-
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, index=True, nullable=False)
     segment = Column(String, nullable=False)  # all|registered|deposited
@@ -114,7 +101,6 @@ class Broadcast(Base):
 
 class BroadcastJob(Base):
     __tablename__ = "broadcast_jobs"
-
     id = Column(Integer, primary_key=True)
     broadcast_id = Column(Integer, ForeignKey("broadcasts.id"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
@@ -125,7 +111,6 @@ class BroadcastJob(Base):
 
 class StatsDaily(Base):
     __tablename__ = "stats_daily"
-
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, index=True, nullable=False)
     date = Column(String, nullable=False)  # YYYY-MM-DD
@@ -136,17 +121,11 @@ class StatsDaily(Base):
 
 class TenantConfig(Base):
     __tablename__ = "tenant_configs"
-
     tenant_id = Column(Integer, ForeignKey("tenants.id"), primary_key=True)
-
-    # Депозит
     require_deposit = Column(Boolean, nullable=False, default=True)
     min_deposit = Column(Integer, nullable=False, default=50)
-
-    # Подписка
     require_subscription = Column(Boolean, nullable=False, default=False)
-
-    # VIP
+    # NEW: динамический порог VIP
     vip_threshold = Column(Integer, nullable=False, default=500)
 
     tenant = relationship("Tenant", backref="cfg", uselist=False)

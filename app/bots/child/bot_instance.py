@@ -758,15 +758,10 @@ async def run_child_bot(tenant: Tenant):
                 User.tg_user_id == cb.from_user.id
             ).first()
             if not user:
-                await cb.answer()
+                await cb.answer();
                 return
 
-            # если доступ уже открыт — НЕ пересылаем «unlocked», а просто перерисовываем главное
-            if user.step == UserStep.deposited:
-                await render_main(bot, tenant, user)
-                await cb.answer()
-                return
-
+            # ВСЕГДА идём через render_get (он сам покажет unlocked с web_app)
             await render_get(bot, tenant, user)
             db.commit()
             await cb.answer()
@@ -1273,6 +1268,28 @@ async def run_child_bot(tenant: Tenant):
             total = get_deposit_total(db, tenant.id, u)
             if total >= cfg.min_deposit and u.step != UserStep.deposited:
                 u.step = UserStep.deposited
+
+            db.commit()
+            # Сообщим пользователю и сразу дадим кнопку WebApp
+            try:
+                locale = u.lang or tenant.lang_default or "ru"
+                text, img = tget(db, tenant.id, "unlocked", locale, default_text("unlocked", locale))
+                kb = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(
+                            text="📈 Получить сигнал" if locale == "ru" else "📈 Get signal",
+                            web_app=WebAppInfo(url=tenant_miniapp_url(tenant, u))
+                        )],
+                        [InlineKeyboardButton(
+                            text="🏠 Главное меню" if locale == "ru" else "🏠 Main menu",
+                            callback_data="menu:main"
+                        )],
+                    ]
+                )
+                await send_screen(bot, u, "unlocked", locale, text, kb, img)
+                db.commit()  # сохранить обновлённый last_message_id
+            except Exception as e:
+                print(f"[manual-dep unlocked notify] {e}")
 
             thr = int(getattr(cfg, "vip_threshold", 500) or 500)
             if total >= thr and not getattr(u, "vip_notified", False):

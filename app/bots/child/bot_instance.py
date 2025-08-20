@@ -270,13 +270,21 @@ def kb_lang(current: Optional[str]):
 def kb_subscribe(locale: str, channel_url: str) -> InlineKeyboardMarkup:
     go_txt = "🚀 Перейти в канал" if locale == "ru" else "🚀 Go to channel"
     back_txt = "🏠 Главное меню" if locale == "ru" else "🏠 Main menu"
-    check_txt = "🔄 Проверил(а), обновить" if locale == "ru" else "🔄 I subscribed, refresh"
+
+    url = (channel_url or "").strip()
+    # Валидируем: если это @username — превратим в https; если это -100... — ссылку не ставим
+    if url.startswith("@"):
+        url = f"https://t.me/{url[1:]}"
+    elif not (url.startswith("http://") or url.startswith("https://")):
+        # любое иное не-URL (например -100...) — подставим дефолт, чтобы не было Bad Request
+        url = "https://t.me"
+
     rows = [
-        [InlineKeyboardButton(text=go_txt, url=channel_url or "about:blank")],
-        [InlineKeyboardButton(text=check_txt, callback_data="menu:subcheck")],
+        [InlineKeyboardButton(text=go_txt, url=url)],
         [InlineKeyboardButton(text=back_txt, callback_data="menu:main")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 
 # ------------------------------- РЕНДЕР ЭКРАНОВ ------------------------------

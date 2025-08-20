@@ -990,12 +990,41 @@ async def run_child_bot(tenant: Tenant):
             try:
                 u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
                 if not u:
-                    await cb.answer("Юзер не найден"); db.close(); return
+                    await cb.answer("Юзер не найден");
+                    db.close();
+                    return
+
                 u.is_vip = True
+                # Чтобы не дублировать уведомления далее
+                u.vip_notified = True
+
                 db.commit()
             finally:
                 db.close()
-            await cb.answer("VIP включён"); return
+
+            # Отправим уведомление пользователю
+            try:
+                locale = u.lang or tenant.lang_default or "ru"
+                if locale == "ru":
+                    text = "🎉 Вам выдан доступ к премиум-боту! Напишите в поддержку для подключения."
+                else:
+                    text = "🎉 You’ve been granted access to the premium bot! Contact support to get connected."
+
+                # Кнопка «Поддержка», если задана
+                kb = None
+                if tenant.support_url:
+                    kb = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="🆘 Поддержка" if locale == "ru" else "🆘 Support",
+                                              url=tenant.support_url)]
+                    ])
+
+                await bot.send_message(uid, text, reply_markup=kb)
+            except Exception:
+                # Пользователь мог закрыть ЛС, игнорируем
+                pass
+
+            await cb.answer("VIP включён")
+            return
 
         if action.startswith("vip:unset:"):
             uid = int(action.split(":")[2])

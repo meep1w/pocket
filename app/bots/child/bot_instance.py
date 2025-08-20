@@ -64,15 +64,16 @@ DEFAULT_TEXTS = {
     },
 
     "subscribe": {
-        "ru": (
-            "Для начала подпишитесь на канал.\n\n"
-            "После подписки нажмите «🔄 Проверить подписку»."
-        ),
-        "en": (
-            "First, subscribe to the channel.\n\n"
-            "After subscribing, tap “🔄 Check subscription”."
-        ),
-    },
+    "ru": (
+        "Для начала подпишитесь на канал.\n\n"
+        "После подписки вернитесь в бот."
+    ),
+    "en": (
+        "First, subscribe to the channel.\n\n"
+        "After subscribing, return to the bot."
+    ),
+},
+
 
     "step1": {
         "ru": (
@@ -356,18 +357,17 @@ async def is_user_subscribed(bot: Bot, channel: str, user_id: int) -> bool:
     Проверяем, состоит ли пользователь в канале.
     Работает и для приватных каналов (с заявками), если бот — админ.
     """
-    if not channel:
+    ident = _parse_channel_identifier(channel)
+    if not ident:
+        # если канал не задан — считаем, что проверка пройдена
         return True
     try:
-        if channel.startswith("http"):
-            if "t.me/" in channel:
-                channel = channel.split("t.me/")[-1]
-                channel = channel.lstrip("+@")
-        member = await bot.get_chat_member(channel, user_id)
+        member = await bot.get_chat_member(ident, user_id)
         return member.status in ("member", "administrator", "creator")
     except Exception as e:
         print(f"[subscribe-check] error: {e}")
         return False
+
 
 
 
@@ -756,33 +756,6 @@ async def run_child_bot(tenant: Tenant):
         finally:
             db.close()
 
-    # -------- SUBSCRIBE CHECK --------
-    @r.callback_query(F.data == "sub:check")
-    async def on_sub_check(cb: CallbackQuery):
-        db = SessionLocal()
-        try:
-            user = db.query(User).filter(User.tenant_id == tenant.id,
-                                         User.tg_user_id == cb.from_user.id).first()
-            if not user:
-                await cb.answer()
-                return
-            locale = user.lang or tenant.lang_default or "ru"
-            cfg = get_cfg(db, tenant.id)
-
-            if not cfg.require_subscription:
-                await render_main(bot, tenant, user)
-                await cb.answer("Проверка подписки отключена" if locale == "ru" else "Subscription check is off")
-                return
-
-            ok = await is_user_subscribed(bot, tenant.channel_url or "", user.tg_user_id)
-            if ok:
-                await render_get(bot, tenant, user)
-                await cb.answer("Подписка подтверждена ✅" if locale == "ru" else "Subscription confirmed ✅")
-            else:
-                await render_subscribe(bot, tenant, user)
-                await cb.answer("Пока не вижу подписки" if locale == "ru" else "Still not subscribed")
-        finally:
-            db.close()
 
     # -------- ADMIN --------
     def owner_only(uid: int) -> bool:

@@ -250,13 +250,24 @@ def _normalize_support_url(u: Optional[str]) -> Optional[str]:
     return None
 
 
-def kb_main(locale: str, support_url: Optional[str], tenant: Tenant, user: User):
-    signal_btn = InlineKeyboardButton(
-        text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
-        callback_data="menu:get",
-    )
-
+def kb_main(locale: str, support_url: Optional[str], tenant: Tenant, user: User, cfg: TenantConfig):
     sup_url = _normalize_support_url(support_url)
+
+    # есть ли доступ (не учитываем подписку здесь — её проверит on_get при необходимости)
+    has_access = (user.step == UserStep.deposited) or (not cfg.require_deposit and user.step >= UserStep.registered)
+
+    # если включена проверка подписки — оставляем callback, чтобы не обходить чек
+    if cfg.require_subscription or not has_access:
+        signal_btn = InlineKeyboardButton(
+            text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
+            callback_data="menu:get",
+        )
+    else:
+        # доступ открыт — сразу web_app (VIP подставится в tenant_miniapp_url)
+        signal_btn = InlineKeyboardButton(
+            text="📈 Get signal" if locale == "en" else "📈 Получить сигнал",
+            web_app=WebAppInfo(url=tenant_miniapp_url(tenant, user)),
+        )
 
     if locale == "en":
         rows = [[InlineKeyboardButton(text="📘 Instruction", callback_data="menu:guide")]]
@@ -276,6 +287,7 @@ def kb_main(locale: str, support_url: Optional[str], tenant: Tenant, user: User)
         rows.append([signal_btn])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 
 
@@ -348,11 +360,13 @@ async def render_main(bot: Bot, tenant: Tenant, user: User):
     try:
         locale = user.lang or tenant.lang_default or "ru"
         text, img = tget(db, tenant.id, "main", locale, default_text("main", locale))
-        kb = kb_main(locale, tenant.support_url, tenant, user)
+        cfg = get_cfg(db, tenant.id)
+        kb = kb_main(locale, tenant.support_url, tenant, user, cfg)
         await send_screen(bot, user, "main", locale, text, kb, img)
         db.commit()
     finally:
         db.close()
+
 
 async def render_guide(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
@@ -1022,58 +1036,55 @@ async def run_child_bot(tenant: Tenant):
             await cb.message.edit_text(title, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows), disable_web_page_preview=True)
             await cb.answer(); return
 
+        # === VIP: назначить мини-аппу из ENV (флаг VIP + VIP_MINIAPP_URL) ===
         if action.startswith("vip:miniapp:env:"):
-            # внутри admin_router, блок: if action.startswith("vip:miniapp:env:"):
             uid = int(action.split(":")[-1])
             db = SessionLocal()
             try:
                 u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
                 if not u:
                     await cb.answer("Юзер не найден");
-                    db.close();
                     return
 
-                cfg = get_cfg(db, tenant.id)
-
+                # Включаем VIP, чистим кастомный URL -> будет браться из ENV
                 u.is_vip = True
-                u.vip_miniapp_url = None  # брать из ENV
+                u.vip_miniapp_url = None
                 db.commit()
 
-                # 1) если доступ уже открыт — сразу дай экран с web_app (уже VIP-URL)
-                if u.step == UserStep.deposited or (not cfg.require_deposit and u.step >= UserStep.registered):
-                    locale = u.lang or tenant.lang_default or "ru"
-                    text, img = tget(db, tenant.id, "unlocked", locale, default_text("unlocked", locale))
-                    kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(
-                            text="📈 Получить сигнал" if locale == "ru" else "📈 Get signal",
-                            web_app=WebAppInfo(url=tenant_miniapp_url(tenant, u))
-                        )],
-                        [InlineKeyboardButton(text="🏠 Главное меню" if locale == "ru" else "🏠 Main menu",
-                                              callback_data="menu:main")],
-                    ])
-                    await send_screen(bot, u, "unlocked", locale, text, kb, img)
-                    db.commit()  # сохранить last_message_id
+                # Мгновенно обновим главное меню у пользователя (кнопка откроет VIP)
+                try:
+                    await render_main(bot, tenant, u)
+                except Exception as e:
+                    print(f"[vip env render_main] {e}")
 
-                # 2) пуш пользователю о VIP
+                # Пуш про VIP (без «доступ открыт»)
                 try:
                     locale = u.lang or tenant.lang_default or "ru"
-                    m = "🎉 Вам выдан доступ к премиум-боту!" if locale == "ru" else "🎉 You’ve been granted access to the premium bot!"
+                    m = ("🎉 Вам выдан доступ к премиум-боту!"
+                         if locale == "ru" else
+                         "🎉 You’ve been granted access to the premium bot!")
                     kb_support = None
                     if tenant.support_url:
                         kb_support = InlineKeyboardMarkup(inline_keyboard=[
-                            [InlineKeyboardButton(text="🆘 Поддержка" if locale == "ru" else "🆘 Support",
-                                                  url=tenant.support_url)]
+                            [InlineKeyboardButton(
+                                text="🆘 Поддержка" if locale == "ru" else "🆘 Support",
+                                url=tenant.support_url
+                            )]
                         ])
                     await bot.send_message(uid, m, reply_markup=kb_support)
                 except Exception as e:
                     print(f"[vip env notify] {e}")
             finally:
                 db.close()
-            await cb.message.edit_text("✅ Назначена VIP-мини-апп из ENV. Пользователь увидит VIP при «Получить сигнал».",
-            reply_markup=kb_admin_main()
-        )
-            await cb.answer("Готово")
 
+            await cb.message.edit_text(
+                "✅ Назначена VIP-мини-апп из ENV. Пользователь уже видит её в «Получить сигнал».",
+                reply_markup=kb_admin_main()
+            )
+            await cb.answer("Готово")
+            return
+
+        # === VIP: запросить кастомный VIP URL (ввод сообщением) ===
         if action.startswith("vip:miniapp:ask:"):
             uid = int(action.split(":")[-1])
             await state.update_data(vip_user_id=uid)
@@ -1081,89 +1092,132 @@ async def run_child_bot(tenant: Tenant):
             await cb.message.edit_text(
                 f"Пришлите VIP Web-app URL для <code>{uid}</code> одним сообщением.\n"
                 f"Чтобы очистить, пришлите «-».")
-            await cb.answer(); return
+            await cb.answer()
+            return
 
+        # === VIP: вернуть стоковую (выключить VIP + убрать кастом) ===
         if action.startswith("vip:miniapp:stock:"):
             uid = int(action.split(":")[-1])
             db = SessionLocal()
             try:
                 u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
                 if not u:
-                    await cb.answer("Юзер не найден"); db.close(); return
-                u.vip_miniapp_url = None  # убираем кастом
-                u.is_vip = False          # выключаем VIP → откроется обычная мини-апп (tenant/ENV)
+                    await cb.answer("Юзер не найден");
+                    return
+                u.vip_miniapp_url = None
+                u.is_vip = False
                 db.commit()
+
+                # Обновим главное меню (кнопка теперь откроет обычную мини-аппу)
+                try:
+                    await render_main(bot, tenant, u)
+                except Exception as e:
+                    print(f"[vip stock render_main] {e}")
             finally:
                 db.close()
-            await cb.message.edit_text("↩️ Вернул обычную мини-апп. Теперь «Получить сигнал» открывает не-VIP версию.",
-                                       reply_markup=kb_admin_main())
-            await cb.answer("Готово"); return
 
+            await cb.message.edit_text(
+                "↩️ Вернул обычную мини-апп. Теперь «Получить сигнал» открывает не-VIP версию.",
+                reply_markup=kb_admin_main()
+            )
+            await cb.answer("Готово")
+            return
+
+        # === VIP: управление по TG ID (ввод) ===
         if action == "vip:byid":
             await state.set_state(AdminForm.vip_wait_user_id)
             await cb.message.edit_text("Пришлите TG ID пользователя.")
-            await cb.answer(); return
+            await cb.answer()
+            return
 
+        # === VIP: включить ===
         if action.startswith("vip:set:"):
             uid = int(action.split(":")[2])
             db = SessionLocal()
             try:
                 u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
                 if not u:
-                    await cb.answer("Юзер не найден"); db.close(); return
+                    await cb.answer("Юзер не найден");
+                    return
 
                 u.is_vip = True
-                u.vip_notified = True  # чтобы не дублировать уведомления далее
+                u.vip_notified = True  # чтобы не дублировать в будущем
                 db.commit()
+
+                # Обновим главное меню у пользователя (кнопка — VIP)
+                try:
+                    await render_main(bot, tenant, u)
+                except Exception as e:
+                    print(f"[vip set render_main] {e}")
             finally:
                 db.close()
 
-            # Отправим уведомление пользователю
+            # Пуш о VIP
             try:
                 locale = u.lang or tenant.lang_default or "ru"
-                if locale == "ru":
-                    text = "🎉 Вам выдан доступ к премиум-боту! Напишите в поддержку для подключения."
-                else:
-                    text = "🎉 You’ve been granted access to the premium bot! Contact support to get connected."
-
+                text = ("🎉 Вам выдан доступ к премиум-боту! Напишите в поддержку для подключения."
+                        if locale == "ru" else
+                        "🎉 You’ve been granted access to the premium bot! Contact support to get connected.")
                 kb = None
                 if tenant.support_url:
                     kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="🆘 Поддержка" if locale == "ru" else "🆘 Support",
-                                              url=tenant.support_url)]
+                        [InlineKeyboardButton(
+                            text="🆘 Поддержка" if locale == "ru" else "🆘 Support",
+                            url=tenant.support_url
+                        )]
                     ])
-
                 await bot.send_message(uid, text, reply_markup=kb)
             except Exception:
                 pass
 
-            await cb.answer("VIP включён"); return
+            await cb.answer("VIP включён")
+            return
 
+        # === VIP: выключить ===
         if action.startswith("vip:unset:"):
             uid = int(action.split(":")[2])
             db = SessionLocal()
             try:
                 u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
                 if not u:
-                    await cb.answer("Юзер не найден"); db.close(); return
+                    await cb.answer("Юзер не найден");
+                    return
                 u.is_vip = False
                 db.commit()
+
+                # Перерисуем главное меню (кнопка — обычная мини-апп)
+                try:
+                    await render_main(bot, tenant, u)
+                except Exception as e:
+                    print(f"[vip unset render_main] {e}")
             finally:
                 db.close()
-            await cb.answer("VIP выключен"); return
 
+            await cb.answer("VIP выключен")
+            return
+
+        # === VIP: очистить кастомный URL ===
         if action.startswith("vip:url:clear:"):
             uid = int(action.split(":")[3])
             db = SessionLocal()
             try:
                 u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
                 if not u:
-                    await cb.answer("Юзер не найден"); db.close(); return
+                    await cb.answer("Юзер не найден");
+                    return
                 u.vip_miniapp_url = None
                 db.commit()
+
+                # Перерисуем главное меню (если VIP=True — возьмётся ENV VIP)
+                try:
+                    await render_main(bot, tenant, u)
+                except Exception as e:
+                    print(f"[vip url clear render_main] {e}")
             finally:
                 db.close()
-            await cb.answer("URL очищен"); return
+
+            await cb.answer("URL очищен")
+            return
 
         if action == "pb":
             db = SessionLocal()

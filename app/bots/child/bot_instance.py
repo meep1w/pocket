@@ -170,8 +170,13 @@ def _parse_channel_identifier(url: str):
         print("[sub] no channel_url provided")
         return None
     u = str(url).strip()
+    # numeric chat_id (supergroup/channel)
     if u.startswith("-100") and u[4:].isdigit():
-        ident = int(u)
+        try:
+            ident = int(u)
+        except Exception:
+            print(f"[sub] bad numeric id: {u}")
+            return None
         print(f"[sub] parsed chat_id={ident}")
         return ident
     if u.startswith("@"):
@@ -181,6 +186,7 @@ def _parse_channel_identifier(url: str):
         tail = u.split("t.me/", 1)[1]
         tail = tail.split("?", 1)[0].strip("/")
         if not tail or tail.startswith("+") or tail.lower() == "joinchat":
+            # по инвайт-ссылке проверка не сработает
             print(f"[sub] invite or joinchat link, cannot check: {u}")
             return None
         ident = "@" + tail if not tail.startswith("@") else tail
@@ -188,6 +194,7 @@ def _parse_channel_identifier(url: str):
         return ident
     print(f"[sub] unknown format: {u}")
     return None
+
 
 async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
     ident = _parse_channel_identifier(channel_url)
@@ -197,11 +204,15 @@ async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
     try:
         print(f"[sub] get_chat_member ident={ident} user_id={user_id}")
         member = await bot.get_chat_member(ident, user_id)
-        print(f"[sub] result status={getattr(member, 'status', None)}")
-        return member.status in ("member", "administrator", "creator")
+        status = getattr(member, "status", None)
+        print(f"[sub] result status={status}")
+        # В супергруппах "restricted" = участник (с ограничениями), тоже считаем подписанным
+        return status in ("member", "administrator", "creator", "restricted")
     except Exception as e:
-        print(f"[subscribe-check] error: {e}")
+        # На каналах без админства может быть CHAT_ADMIN_REQUIRED, а также 400 если чат недоступен
+        print(f"[subscribe-check] error: {e} (channel_url={channel_url!r}, ident={ident}, user_id={user_id})")
         return False
+
 
 def tenant_miniapp_url(tenant: Tenant, user: User) -> str:
     if getattr(user, "vip_miniapp_url", None):
@@ -259,11 +270,14 @@ def kb_lang(current: Optional[str]):
 def kb_subscribe(locale: str, channel_url: str) -> InlineKeyboardMarkup:
     go_txt = "🚀 Перейти в канал" if locale == "ru" else "🚀 Go to channel"
     back_txt = "🏠 Главное меню" if locale == "ru" else "🏠 Main menu"
+    check_txt = "🔄 Проверил(а), обновить" if locale == "ru" else "🔄 I subscribed, refresh"
     rows = [
         [InlineKeyboardButton(text=go_txt, url=channel_url or "about:blank")],
+        [InlineKeyboardButton(text=check_txt, callback_data="menu:subcheck")],
         [InlineKeyboardButton(text=back_txt, callback_data="menu:main")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 # ------------------------------- РЕНДЕР ЭКРАНОВ ------------------------------
 async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang: Optional[str]):
@@ -677,6 +691,35 @@ async def run_child_bot(tenant: Tenant):
             await render_lang_screen(bot, tenant, user, user.lang)
             db.commit()
             await cb.answer()
+        finally:
+            db.close()
+
+    @r.callback_query(F.data == "menu:subcheck")
+    async def on_subcheck(cb: CallbackQuery):
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(
+                User.tenant_id == tenant.id,
+                User.tg_user_id == cb.from_user.id
+            ).first()
+            if not user:
+                await cb.answer()
+                return
+
+            locale = user.lang or tenant.lang_default or "ru"
+            cfg = get_cfg(db, tenant.id)
+
+            ok = await is_user_subscribed(bot, tenant.channel_url or "", user.tg_user_id)
+            if not ok:
+                # всё ещё нет
+                await cb.answer("Ещё не вижу подписку 🤷‍♂️" if locale == "ru" else "Still not subscribed 🤷‍♂️",
+                                show_alert=False)
+                return
+
+            # Ок — сразу продолжаем обычный сценарий
+            await render_get(bot, tenant, user)
+            db.commit()
+            await cb.answer("Готово ✅" if locale == "ru" else "All set ✅")
         finally:
             db.close()
 

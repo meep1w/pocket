@@ -682,7 +682,7 @@ async def run_child_bot(tenant: Tenant):
             user = db.query(User).filter(User.tenant_id == tenant.id,
                                          User.tg_user_id == msg.from_user.id).first()
             if not user:
-                await msg.answer("Пользователь ещё не зарегистрирован в системе.")
+                await msg.answer("Польз ователь ещё не зарегистрирован в системе.")
                 return
             user.step = UserStep.new
             user.trader_id = None

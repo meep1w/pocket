@@ -30,7 +30,7 @@ async def _owner_is_member(owner_tg_id: int) -> bool:
 
 
 async def _child_entry(t: Tenant):
-    """Обёртка вокруг run_child_bot, чтобы не падать тихо и перезапускаться при сбоях."""
+    """Обёр тка вокруг run_child_bot, чтобы не падать тихо и перезапускаться при сбоях."""
     print(f"[runner] child starting: tenant_id={t.id} username={t.child_bot_username}")
     while True:
         try:

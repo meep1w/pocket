@@ -1,5 +1,5 @@
 import asyncio
-from typing import Dict
+from typing import Dict, Optional
 
 from aiogram import Bot
 from sqlalchemy import text
@@ -11,18 +11,37 @@ from app.settings import settings
 
 CHECK_INTERVAL_SEC = 5
 
-parent_bot = Bot(token=settings.parent_bot_token)  # для проверки членства
+# Бот-родитель: нужен только для проверки членства владельца в канале
+parent_bot = Bot(token=settings.parent_bot_token)
 
-# Флаг, чтобы отладка БД выполнилась один раз при старте
+# Глобальный флаг: печатаем отладку БД один раз
 _DB_DEBUG_DONE = False
 
 
 async def _owner_is_member(owner_tg_id: int) -> bool:
+    """Проверка, что владелец (owner_tg_id) состоит в приватном канале.
+    Если упали на любом исключении — считаем, что не состоит.
+    """
     try:
         m = await parent_bot.get_chat_member(settings.private_channel_id, owner_tg_id)
         return m.status not in ("left", "kicked")
     except Exception:
         return False
+
+
+async def _child_entry(t: Tenant):
+    """Обёртка вокруг run_child_bot, чтобы не падать тихо и перезапускаться при сбоях."""
+    print(f"[runner] child starting: tenant_id={t.id} username={t.child_bot_username}")
+    while True:
+        try:
+            await run_child_bot(t)  # должен висеть, пока идёт polling
+            print(f"[runner] run_child_bot RETURNED: tenant_id={t.id} username={t.child_bot_username}; restart in 5s")
+        except asyncio.CancelledError:
+            print(f"[runner] child cancelled: tenant_id={t.id} username={t.child_bot_username}")
+            raise
+        except Exception as e:
+            print(f"[runner] child crashed: tenant_id={t.id} username={t.child_bot_username} exc={e!r}; restart in 5s")
+        await asyncio.sleep(5)
 
 
 async def manager_loop():
@@ -39,15 +58,17 @@ async def manager_loop():
                 pass
 
     while True:
-        # --- ОДНОРАЗОВАЯ ОТЛАДКА БД ---
+        # --- одноразовая отладка БД ---
         if not _DB_DEBUG_DONE:
             try:
                 print("[runner][DB] engine.url:", engine.url)
                 with engine.connect() as conn:
                     dblist = conn.exec_driver_sql("PRAGMA database_list;").all()
                     print("[runner][DB] PRAGMA database_list:", dblist)
+
                     cols = conn.exec_driver_sql("PRAGMA table_info(tenants);").all()
                     print("[runner][DB] tenants columns:", [c[1] for c in cols])
+
                     # Проверим конкретно наличие столбца реальным запросом
                     try:
                         _ = conn.exec_driver_sql("SELECT channel_url FROM tenants LIMIT 1;").all()
@@ -58,19 +79,22 @@ async def manager_loop():
                 print("[runner][DB] introspection error:", repr(e))
             finally:
                 _DB_DEBUG_DONE = True
-        # --- КОНЕЦ ОТЛАДКИ ---
+        # --- конец отладки ---
 
         db = SessionLocal()
         try:
-            # автопауза, если владелец не в канале
+            # автопауза: если владелец не в канале — переводим в paused
             active = db.query(Tenant).filter(Tenant.status == TenantStatus.active).all()
             for t in active:
-                ok = await _owner_is_member(t.owner_tg_id)
+                try:
+                    ok = await _owner_is_member(t.owner_tg_id)
+                except Exception:
+                    ok = False
                 if not ok:
                     t.status = TenantStatus.paused
             db.commit()
 
-            # пересобираем активных
+            # перечитаем активных
             active = db.query(Tenant).filter(Tenant.status == TenantStatus.active).all()
             active_ids = {t.id for t in active}
 
@@ -82,7 +106,8 @@ async def manager_loop():
             # запустить недостающих
             for t in active:
                 if t.id not in tasks:
-                    tasks[t.id] = asyncio.create_task(run_child_bot(t))
+                    task = asyncio.create_task(_child_entry(t))
+                    tasks[t.id] = task
         finally:
             db.close()
 

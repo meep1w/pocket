@@ -633,6 +633,15 @@ def editor_status_text(db, tenant_id: int, key: str, lang: str) -> str:
 async def run_child_bot(tenant: Tenant):
     bot = Bot(token=tenant.child_bot_token, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher(storage=MemoryStorage())
+    # --- проверим токен детского бота заранее
+    try:
+        me = await bot.get_me()
+        print(f"[child] bot online: @{me.username} (tenant_id={tenant.id})")
+    except Exception as e:
+        print(f"[child] INVALID TOKEN for tenant_id={tenant.id}: {e!r}")
+        return
+
+
     r = Router()
     r.message.outer_middleware(TenantGate(tenant.id))
     r.callback_query.outer_middleware(TenantGate(tenant.id))
@@ -2075,11 +2084,14 @@ async def run_child_bot(tenant: Tenant):
         try:
             try:
                 await bot.delete_webhook(drop_pending_updates=True)
-            except Exception:
-                pass
-            await dp.start_polling(bot)
+                await dp.start_polling(bot)
+            except Exception as e:
+                print(f"[child] start_polling crashed for tenant_id={tenant.id}: {e!r}")
+            finally:
+                await bot.session.close()
         except asyncio.CancelledError:
             pass
+
         finally:
             await bot.session.close()
 

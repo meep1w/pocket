@@ -2,7 +2,9 @@ import asyncio
 from typing import Dict
 
 from aiogram import Bot
-from app.db import SessionLocal
+from sqlalchemy import text
+
+from app.db import SessionLocal, engine
 from app.models import Tenant, TenantStatus
 from app.bots.child.bot_instance import run_child_bot
 from app.settings import settings
@@ -10,6 +12,9 @@ from app.settings import settings
 CHECK_INTERVAL_SEC = 5
 
 parent_bot = Bot(token=settings.parent_bot_token)  # для проверки членства
+
+# Флаг, чтобы отладка БД выполнилась один раз при старте
+_DB_DEBUG_DONE = False
 
 
 async def _owner_is_member(owner_tg_id: int) -> bool:
@@ -21,6 +26,7 @@ async def _owner_is_member(owner_tg_id: int) -> bool:
 
 
 async def manager_loop():
+    global _DB_DEBUG_DONE
     tasks: Dict[int, asyncio.Task] = {}
 
     async def stop_task(tid: int):
@@ -33,6 +39,27 @@ async def manager_loop():
                 pass
 
     while True:
+        # --- ОДНОРАЗОВАЯ ОТЛАДКА БД ---
+        if not _DB_DEBUG_DONE:
+            try:
+                print("[runner][DB] engine.url:", engine.url)
+                with engine.connect() as conn:
+                    dblist = conn.exec_driver_sql("PRAGMA database_list;").all()
+                    print("[runner][DB] PRAGMA database_list:", dblist)
+                    cols = conn.exec_driver_sql("PRAGMA table_info(tenants);").all()
+                    print("[runner][DB] tenants columns:", [c[1] for c in cols])
+                    # Проверим конкретно наличие столбца реальным запросом
+                    try:
+                        _ = conn.exec_driver_sql("SELECT channel_url FROM tenants LIMIT 1;").all()
+                        print("[runner][DB] raw SELECT channel_url: OK")
+                    except Exception as e:
+                        print("[runner][DB] raw SELECT channel_url: FAIL ->", repr(e))
+            except Exception as e:
+                print("[runner][DB] introspection error:", repr(e))
+            finally:
+                _DB_DEBUG_DONE = True
+        # --- КОНЕЦ ОТЛАДКИ ---
+
         db = SessionLocal()
         try:
             # автопауза, если владелец не в канале

@@ -1,0 +1,11 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+pocketbot.db
+pocketbot.db.bak*
+pocketbot_backup_*.db
+db.sqlite3
+.idea/
+.vscode/
+*.log

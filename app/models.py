@@ -65,6 +65,7 @@ class User(Base):
     last_message_id = Column(Integer, default=None)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
+    access_notified = Column(Boolean, default=False)  # экран "Доступ открыт" уже показывали
 
     # VIP
     is_vip = Column(Boolean, default=False)

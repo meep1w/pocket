@@ -1,7 +1,14 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-engine = create_engine("sqlite:///pocketbot.db", echo=False, future=True, connect_args={"check_same_thread": False})
+SQLALCHEMY_DATABASE_URL = "sqlite:///pocketbot.db"
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    echo=False,
+    future=True,
+    connect_args={"check_same_thread": False}
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 Base = declarative_base()
 

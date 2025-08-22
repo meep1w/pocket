@@ -1,11 +1,34 @@
-.venv/
-venv/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.venv/
+
+# Env & DB
+.env
+.env.*
+*.sqlite*
 pocketbot.db
-pocketbot.db.bak*
-pocketbot_backup_*.db
-db.sqlite3
+
+# Logs & caches
+*.log
+logs/
+.pytest_cache/
+.mypy_cache/
+.cache/
+
+# IDE
 .idea/
 .vscode/
-*.log
+*.iml
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/

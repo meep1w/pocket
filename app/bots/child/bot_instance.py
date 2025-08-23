@@ -666,10 +666,7 @@ async def run_child_bot(tenant: Tenant):
 
     # --- выбор языка (после клика на RU/EN)
     @r.callback_query(F.data.startswith("lang:"))
-    async def on_lang_pick(cb: CallbackQuery):
-        lang = (cb.data or "lang:ru").split(":")[1]
-        if lang not in ("ru", "en"):
-            lang = "ru"
+    async def on_lang_select(cb: CallbackQuery):
         db = SessionLocal()
         try:
             user = db.query(User).filter(
@@ -679,16 +676,18 @@ async def run_child_bot(tenant: Tenant):
             if not user:
                 await cb.answer()
                 return
-            user.lang = lang
+
+            locale = (cb.data or "").split(":")[1]
+            if locale not in ("ru", "en"):
+                await cb.answer()
+                return
+
+            user.lang = locale
             db.commit()
-            # удалим экран "выбор языка"
-            try:
-                await safe_delete_message(bot, cb.message.chat.id, cb.message.message_id)
-            except Exception:
-                pass
-            # и откроем главное
-            await recompute_and_route(bot, tenant, user)
-            await cb.answer()
+
+            # После выбора языка сразу рисуем главное меню (и старое сообщение удаляем через send_screen внутри)
+            await render_main(bot, tenant, user)
+            await cb.answer("Язык сохранён")
         finally:
             db.close()
 
@@ -696,13 +695,15 @@ async def run_child_bot(tenant: Tenant):
     async def on_main(cb: CallbackQuery):
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.tenant_id == tenant.id,
-                                         User.tg_user_id == cb.from_user.id).first()
+            user = db.query(User).filter(
+                User.tenant_id == tenant.id,
+                User.tg_user_id == cb.from_user.id
+            ).first()
             if not user:
                 await cb.answer()
                 return
-            # централизованный пересчёт
-            await recompute_and_route(bot, tenant, user)
+            # Главное меню ВСЕГДА, без автоперекидываний
+            await render_main(bot, tenant, user)
             await cb.answer()
         finally:
             db.close()
@@ -1566,6 +1567,91 @@ async def run_child_bot(tenant: Tenant):
         finally:
             db.close()
 
+    @r.callback_query(F.data.startswith("adm:vip:do:reg:"))
+    async def adm_vip_do_reg(cb: CallbackQuery):
+        if cb.from_user.id != tenant.owner_tg_id:
+            await cb.answer();
+            return
+
+        uid = int(cb.data.split(":")[-1])
+
+        db = SessionLocal()
+        try:
+            u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
+            if not u:
+                await cb.answer("Юзер не найден");
+                return
+
+            # создаём запись-постбэк «регистрация»
+            pb = Postback(
+                tenant_id=tenant.id,
+                event="registration",
+                click_id=str(uid),
+                trader_id="manual",
+                sum=0,
+                token_ok=True,
+            )
+            db.add(pb)
+
+            # шаг = зарегистрирован
+            u.step = UserStep.registered
+            db.commit()
+
+            # Обновим экран пользователю (если сможем)
+            try:
+                await render_get(bot, tenant, u)
+            except Exception:
+                pass
+
+            await cb.answer("Ок: регистрация проставлена")
+            await cb.message.edit_text("✅ Ручной постбэк «Регистрация» установлен.", reply_markup=kb_admin_main())
+        finally:
+            db.close()
+
+    @r.callback_query(F.data.startswith("adm:vip:do:dep:"))
+    async def adm_vip_do_dep(cb: CallbackQuery):
+        if cb.from_user.id != tenant.owner_tg_id:
+            await cb.answer();
+            return
+
+        uid = int(cb.data.split(":")[-1])
+
+        db = SessionLocal()
+        try:
+            u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
+            if not u:
+                await cb.answer("Юзер не найден");
+                return
+
+            cfg = get_cfg(db, tenant.id)
+            sum_value = int(cfg.min_deposit or 50)
+
+            # создаём запись-постбэк «депозит»
+            pb = Postback(
+                tenant_id=tenant.id,
+                event="deposit",
+                click_id=str(uid),
+                trader_id="manual",
+                sum=sum_value,
+                token_ok=True,
+            )
+            db.add(pb)
+
+            # шаг = с депозитом
+            u.step = UserStep.deposited
+            db.commit()
+
+            # Обновим экран пользователю (покажем «доступ открыт» один раз)
+            try:
+                await render_get(bot, tenant, u, force_unlocked=True)
+            except Exception:
+                pass
+
+            await cb.answer("Ок: депозит проставлен")
+            await cb.message.edit_text("✅ Ручной постбэк «Депозит» установлен.", reply_markup=kb_admin_main())
+        finally:
+            db.close()
+
     @r.message(AdminForm.vip_wait_url)
     async def vip_set_url(msg: Message, state: FSMContext):
         if not owner_only(msg.from_user.id): return
@@ -1589,6 +1675,8 @@ async def run_child_bot(tenant: Tenant):
             await msg.answer("✅ VIP URL сохранён.", reply_markup=kb_admin_main())
         finally:
             db.close()
+
+
 
     @r.message(AdminForm.vip_wait_miniapp_url)
     async def vip_set_miniapp_from_menu(msg: Message, state: FSMContext):

@@ -1,3 +1,4 @@
+# app/bots/child/bot_instance.py
 import asyncio
 from typing import Optional, List, Tuple
 
@@ -36,6 +37,10 @@ KEYS: List[Tuple[str, dict]] = [
 DEFAULT_TEXTS = {
     "lang": {"ru": "Выберите язык", "en": "Choose your language"},
     "main": {"ru": "Главное меню", "en": "Main menu"},
+    "guide": {
+        "ru": "Ниже инструкция.",
+        "en": "Instruction below.",
+    },
     "subscribe": {
         "ru": "Для начала подпишитесь на канал.\n\nПосле подписки вернитесь в бот.",
         "en": "First, subscribe to the channel.\n\nAfter subscribing, return to the bot.",
@@ -76,19 +81,24 @@ def _find_stock_file(key: str, locale: str) -> Path | None:
 
 # ---------------------- ПОДПИСКА ----------------------
 async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
-    if not channel_url:
-        return False
-    ident = channel_url.strip()
+    """
+    Проверяем подписку, если есть валидный идентификатор канала/чата.
+    channel_url поддерживает @username, -100..., https://t.me/username.
+    """
+    ident = (channel_url or "").strip()
+    if not ident:
+        # нет канала — считаем, что подписка не требуется
+        return True
     try:
         member = await bot.get_chat_member(ident, user_id)
         status = getattr(member, "status", None)
         return status in ("member", "administrator", "creator", "restricted")
     except Exception as e:
         print(f"[subscribe-check] error: {e}")
-        return False
+        # если не смогли проверить — не блокируем пользователя
+        return True
 
 # ---------------------- ПРОГРЕСС ----------------------
-# --- ЗАМЕНА предыдущей версии ---
 async def recompute_and_route(bot: Bot, tenant: Tenant, user: User):
     """
     Единая функция пересчёта шага и показа нужного экрана.
@@ -99,7 +109,7 @@ async def recompute_and_route(bot: Bot, tenant: Tenant, user: User):
         cfg = db.query(TenantConfig).filter(TenantConfig.tenant_id == tenant.id).first()
         locale = user.lang or tenant.lang_default or "ru"
 
-        # 1) Подписка (если включена)
+        # 1) Подписка (если включена и канал задан)
         if getattr(cfg, "require_subscription", False):
             ok = await is_user_subscribed(bot, tenant.channel_url or "", user.tg_user_id)
             if not ok:
@@ -109,18 +119,16 @@ async def recompute_and_route(bot: Bot, tenant: Tenant, user: User):
 
         # 2) Регистрация → Депозит → Разблокировка
         if user.step in (UserStep.new, UserStep.asked_reg):
-            # показываем Шаг 1
             await render_get(bot, tenant, user)
             db.commit()
             return
 
         if cfg.require_deposit and user.step != UserStep.deposited:
-            # показываем Шаг 2
             await render_get(bot, tenant, user)
             db.commit()
             return
 
-        # 3) Доступ открыт
+        # 3) Доступ открыт: показываем "unlocked" ровно 1 раз
         if not getattr(user, "access_notified", False):
             await render_get(bot, tenant, user, force_unlocked=True)
             user.access_notified = True
@@ -132,7 +140,6 @@ async def recompute_and_route(bot: Bot, tenant: Tenant, user: User):
         db.commit()
     finally:
         db.close()
-
 
 # -------------------------- ОТПРАВКА ЭКРАНА --------------------------
 async def send_screen(bot, user, key: str, locale: str, text: str, kb, image_file_id: str | None):
@@ -157,7 +164,6 @@ async def send_screen(bot, user, key: str, locale: str, text: str, kb, image_fil
     m = await bot.send_message(user.tg_user_id, text, reply_markup=kb)
     user.last_message_id = m.message_id
 
-
 # -------------------------- URL МИНИ-АППЫ --------------------------
 def tenant_miniapp_url(tenant: Tenant, user: User) -> str:
     # Персональная VIP-мини-аппа (если задана)
@@ -175,7 +181,6 @@ def tenant_miniapp_url(tenant: Tenant, user: User) -> str:
     # Обычная мини-аппа (тенантовая или ENV)
     base = (tenant.miniapp_url or settings.miniapp_url).rstrip("/")
     return f"{base}?tenant_id={tenant.id}&uid={user.tg_user_id}"
-
 
 # ------------------------------- КНОПКИ -------------------------------
 def _normalize_support_url(u: Optional[str]) -> Optional[str]:
@@ -257,8 +262,7 @@ def kb_subscribe(locale: str, channel_url: str) -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
-# --------------------------- РЕНДЕР ЭКРАНОВ ---------------------------
+# --------------------------- РЕНДЕР ЭКРАНОВ: данные ---------------------------
 def tget(db, tenant_id: int, key: str, locale: str, fallback_text: str):
     tt = db.query(TenantText).filter(
         TenantText.tenant_id == tenant_id,
@@ -298,6 +302,7 @@ def get_deposit_total(db, tenant_id: int, user: User) -> int:
     ).scalar() or 0
     return int(total)
 
+# --------------------------- РЕНДЕР ЭКРАНОВ: UI ---------------------------
 async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang: Optional[str]):
     db = SessionLocal()
     try:
@@ -342,16 +347,8 @@ async def render_guide(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
     try:
         locale = user.lang or tenant.lang_default or "ru"
-        # Можно держать свой дефолт для guide или использовать текущий
-        text = DEFAULT_TEXTS.get("guide", {}).get(locale) or (
-            "Ниже инструкция." if locale == "ru" else "Instruction below."
-        )
-        img = None
-        # если у тебя есть хранение кастомного текста в TenantText — возьмём его
-        t, i = tget(db, tenant.id, "guide", locale, text)
-        text, img = t, i
-
-        await send_screen(bot, user, "guide", locale, text, kb_back(locale), img)
+        t, i = tget(db, tenant.id, "guide", locale, default_text("guide", locale))
+        await send_screen(bot, user, "guide", locale, t, kb_back(locale), i)
         db.commit()
     finally:
         db.close()
@@ -389,7 +386,6 @@ async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool 
         # Доступ разрешён?
         access = (user.step == UserStep.deposited) or (not cfg.require_deposit and user.step >= UserStep.registered)
         if force_unlocked or access:
-            # если приходим сюда после первого открытия — показать "unlocked" ровно 1 раз
             if not getattr(user, "access_notified", False):
                 text, img = tget(db, tenant.id, "unlocked", locale, default_text("unlocked", locale))
                 kb = InlineKeyboardMarkup(
@@ -410,11 +406,9 @@ async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool 
                 )
                 await send_screen(bot, user, "unlocked", locale, text, kb, img)
                 user.access_notified = True
-                # не рендерим main прямо сейчас — пусть юзер сам нажмёт
                 db.commit()
                 return
 
-            # Уже уведомляли — просто главное меню (кнопка уже web_app)
             await render_main(bot, tenant, user)
             db.commit()
             return
@@ -449,7 +443,8 @@ async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool 
 
         # VIP-инфо по порогу
         try:
-            if dep_total >= int(getattr(cfg, "vip_threshold", 500) or 500) and not getattr(user, "vip_notified", False):
+            thr = int(getattr(cfg, "vip_threshold", 500) or 500)
+            if dep_total >= thr and not getattr(user, "vip_notified", False):
                 msg_txt = (
                     "🎉 Поздравляем! Вам доступен премиум-бот. Напишите в поддержку для подключения."
                     if locale == "ru" else
@@ -472,6 +467,7 @@ async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool 
         db.commit()
     finally:
         db.close()
+
 # ------------------------------- MIDDLEWARE -------------------------------
 class TenantGate(BaseMiddleware):
     def __init__(self, tenant_id: int):
@@ -497,7 +493,6 @@ class TenantGate(BaseMiddleware):
             print(f"[TenantGate] error: {e}")
         return await handler(event, data)
 
-
 # --------------------------------- ADMIN FSM ---------------------------------
 class AdminForm(StatesGroup):
     waiting_support = State()
@@ -522,7 +517,6 @@ class AdminForm(StatesGroup):
     bcast_confirm = State()
 
     params_wait_min_dep = State()
-
 
 # ----------------------------- АДМИН КНОПКИ/МЕНЮ -----------------------------
 def kb_admin_main():
@@ -611,7 +605,6 @@ def kb_broadcast_segments():
         ]
     )
 
-
 def editor_status_text(db, tenant_id: int, key: str, lang: str) -> str:
     tt = db.query(TenantText).filter(
         TenantText.tenant_id == tenant_id, TenantText.locale == lang, TenantText.key == key
@@ -623,7 +616,6 @@ def editor_status_text(db, tenant_id: int, key: str, lang: str) -> str:
         f"Текст: {text_len} символ(ов)\n"
         f"Картинка: {'есть' if has_img else 'нет'}"
     )
-
 
 # ---------------------------- ЗАПУСК ДЕТСКОГО БОТА ----------------------------
 async def run_child_bot(tenant: Tenant):
@@ -669,6 +661,34 @@ async def run_child_bot(tenant: Tenant):
                 return
 
             await render_lang_screen(bot, tenant, user, current_lang=None)
+        finally:
+            db.close()
+
+    # --- выбор языка (после клика на RU/EN)
+    @r.callback_query(F.data.startswith("lang:"))
+    async def on_lang_pick(cb: CallbackQuery):
+        lang = (cb.data or "lang:ru").split(":")[1]
+        if lang not in ("ru", "en"):
+            lang = "ru"
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(
+                User.tenant_id == tenant.id,
+                User.tg_user_id == cb.from_user.id
+            ).first()
+            if not user:
+                await cb.answer()
+                return
+            user.lang = lang
+            db.commit()
+            # удалим экран "выбор языка"
+            try:
+                await safe_delete_message(bot, cb.message.chat.id, cb.message.message_id)
+            except Exception:
+                pass
+            # и откроем главное
+            await recompute_and_route(bot, tenant, user)
+            await cb.answer()
         finally:
             db.close()
 
@@ -1312,14 +1332,24 @@ async def run_child_bot(tenant: Tenant):
                 db.close()
             await cb.answer("URL очищен"); return
 
-        # ----- Broadcast confirm
+        # ----- Рассылка: выбор сегмента → ввод контента
+        if data.startswith("adm:bs:"):
+            seg = data.split(":")[2]
+            if seg not in {"all", "registered", "deposited"}:
+                seg = "all"
+            await state.update_data(bcast_segment=seg)
+            await state.set_state(AdminForm.bcast_wait_content)
+            await cb.message.edit_text("Пришлите текст или фото с подписью для рассылки.\nЗатем нажмите «Запустить».")
+            await cb.answer(); return
+
+        # ----- Запуск рассылки
         if data == "adm:bc:run":
             data_state = await state.get_data()
             seg = data_state.get("bcast_segment", "all")
             text = data_state.get("bcast_text") or ""
             media_id = data_state.get("bcast_media")
             await cb.message.edit_text(
-                "📣 Рассылка поставлена в очередь. Отправка будет дозировано (≤ 40/час).", reply_markup=kb_admin_main()
+                "📣 Рассылка поставлена в очередь. Отправка будет дозировано (≤ rate/час).", reply_markup=kb_admin_main()
             )
             await state.clear()
 
@@ -1335,7 +1365,7 @@ async def run_child_bot(tenant: Tenant):
                 finally:
                     db.close()
 
-                rate = max(1, settings.broadcast_rate_per_hour)
+                rate = max(1, int(getattr(settings, "broadcast_rate_per_hour", 40) or 40))
                 interval = max(90, int(3600 / rate))
 
                 sent = 0
@@ -1359,7 +1389,6 @@ async def run_child_bot(tenant: Tenant):
             asyncio.create_task(_run_broadcast(seg, text, media_id))
             await cb.answer(); return
     # ---- end admin_router
-
 
     # ---- Admin: LINK inputs
     @r.message(AdminForm.waiting_support)
@@ -1663,5 +1692,3 @@ async def run_child_bot(tenant: Tenant):
         pass
     finally:
         await bot.session.close()
-
-

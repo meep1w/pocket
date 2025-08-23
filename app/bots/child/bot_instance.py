@@ -783,7 +783,7 @@ async def run_child_bot(tenant: Tenant):
         lambda c: (
             c.data in {"adm:menu", "adm:links", "adm:pb", "adm:content", "adm:broadcast", "adm:stats", "adm:params", "adm:vip"}
             or (c.data or "").startswith("adm:set:")
-            or (c.data or "").startswith("adm:vip:")
+            or ((c.data or "").startswith("adm:vip:") and not (c.data or "").startswith("adm:vip:do:"))
             or (c.data or "").startswith("adm:bs:")
             or (c.data or "").startswith("adm:ce:")
             or (c.data or "").startswith("adm:ck:")

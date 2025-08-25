@@ -1,34 +1,44 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.so
-*.egg-info/
+# venv / кэш / мусор
 .venv/
+__pycache__/
+*.pyc
+*.pyo
+*.log
 
-# Env & DB
+# локальные данные и секреты
 .env
 .env.*
-*.sqlite*
+*.db
+*.sqlite
+*.sqlite3
 pocketbot.db
-
-# Logs & caches
-*.log
-logs/
-.pytest_cache/
-.mypy_cache/
-.cache/
+pocketbot-backup-*.db
+app.db
 
 # IDE
-.idea/
 .vscode/
-*.iml
+.idea/
 
-# OS junk
+# OS
 .DS_Store
 Thumbs.db
 
-# Build
-dist/
-build/
+# Secrets
+.env
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+pocketbot-backup-*.db
+app.db
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Temp backups
+*.bak
+*.bad

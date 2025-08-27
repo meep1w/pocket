@@ -587,7 +587,7 @@ def kb_admin_main():
             [InlineKeyboardButton(text="🔁 Постбэки", callback_data="adm:pb")],
             [InlineKeyboardButton(text="🧩 Контент", callback_data="adm:content")],
             [InlineKeyboardButton(text="⚙️ Параметры", callback_data="adm:params")],
-            [InlineKeyboardButton(text="👑 VIP", callback_data="adm:vip")],
+            [InlineKeyboardButton(text="👑 PLATINUM", callback_data="adm:vip")],
             [InlineKeyboardButton(text="📣 Рассылка", callback_data="adm:broadcast")],
             [InlineKeyboardButton(text="📊 Статистика", callback_data="adm:stats")],
         ]
@@ -1143,7 +1143,7 @@ async def run_child_bot(tenant: Tenant):
                     [InlineKeyboardButton(text=f"📋 Список кандидатов (≥ ${thr})", callback_data="adm:vip:list")],
                     [InlineKeyboardButton(text="🧾 Постбэк: Регистрация", callback_data="adm:vip:reg")],
                     [InlineKeyboardButton(text="💳 Постбэк: Депозит", callback_data="adm:vip:dep")],
-                    [InlineKeyboardButton(text="✅ Выдать VIP доступ", callback_data="adm:vip:grant")],
+                    [InlineKeyboardButton(text="✅ Выдать PLATINUM доступ", callback_data="adm:vip:grant")],
                     [InlineKeyboardButton(text="🛠 Изменить мини-апп (для имеющих доступ)",
                                           callback_data="adm:vip:miniapp")],
                     [InlineKeyboardButton(text="🎯 Задать порог VIP", callback_data="adm:vip:thr")],
@@ -1152,13 +1152,13 @@ async def run_child_bot(tenant: Tenant):
                 ]
             )
             await state.clear()
-            await cb.message.edit_text("👑 VIP — выберите действие", reply_markup=kb)
+            await cb.message.edit_text("👑 PLATINUM — выберите действие", reply_markup=kb)
             await cb.answer();
             return
 
         if data == "adm:vip:thr":
             await state.set_state(AdminForm.vip_wait_threshold)
-            await cb.message.edit_text("Пришлите новое значение порога VIP (целое число, $).")
+            await cb.message.edit_text("Пришлите новое значение порога PLATINUM (целое число, $).")
             await cb.answer();
             return
 
@@ -1174,7 +1174,7 @@ async def run_child_bot(tenant: Tenant):
                     if total >= thr:
                         rows.append((u.tg_user_id, total, "✅" if u.is_vip else "❌"))
                 rows.sort(key=lambda x: -x[1])
-                txt = f"<b>Кандидаты VIP (≥ ${thr}):</b>\n\n"
+                txt = f"<b>Кандидаты PLATINUM (≥ ${thr}):</b>\n\n"
                 if not rows:
                     txt += "Пока пусто."
                 else:
@@ -1238,7 +1238,7 @@ async def run_child_bot(tenant: Tenant):
                 kb = InlineKeyboardMarkup(inline_keyboard=rows)
             finally:
                 db.close()
-            await cb.message.edit_text("Выберите пользователя для ВЫДАЧИ VIP:", reply_markup=kb)
+            await cb.message.edit_text("Выберите пользователя для ВЫДАЧИ PLATINUM:", reply_markup=kb)
             await cb.answer();
             return
 
@@ -1269,7 +1269,7 @@ async def run_child_bot(tenant: Tenant):
                     kb = InlineKeyboardMarkup(inline_keyboard=rows)
                 finally:
                     db.close()
-                await cb.message.edit_text("Выберите пользователя для изменения VIP мини-аппы:", reply_markup=kb)
+                await cb.message.edit_text("Выберите пользователя для изменения PLATINUM мини-аппы:", reply_markup=kb)
                 await cb.answer();
                 return
 
@@ -1286,9 +1286,9 @@ async def run_child_bot(tenant: Tenant):
                 finally:
                     db.close()
                 rows = [
-                    [InlineKeyboardButton(text="🟣 Выдать VIP-мини-апп (ENV)",
+                    [InlineKeyboardButton(text="🟣 Выдать PLATINUM-мини-апп (ENV)",
                                           callback_data=f"adm:vip:miniapp:env:{uid}")],
-                    [InlineKeyboardButton(text="✏️ Задать кастомный VIP URL",
+                    [InlineKeyboardButton(text="✏️ Задать кастомный PLATINUM URL",
                                           callback_data=f"adm:vip:miniapp:ask:{uid}")],
                     [InlineKeyboardButton(text="↩️ Вернуть стоковую мини-апп",
                                           callback_data=f"adm:vip:miniapp:stock:{uid}")],
@@ -1335,7 +1335,7 @@ async def run_child_bot(tenant: Tenant):
                 finally:
                     db.close()
                 await cb.message.edit_text(
-                    "✅ Назначена VIP-мини-апп из ENV. Пользователь уже видит её в «Получить сигнал».",
+                    "✅ Назначена PLATINUM-мини-апп из ENV. Пользователь уже видит её в «Получить сигнал».",
                     reply_markup=kb_admin_main()
                 )
                 await cb.answer("Готово");
@@ -1346,7 +1346,7 @@ async def run_child_bot(tenant: Tenant):
                 await state.update_data(vip_user_id=uid)
                 await state.set_state(AdminForm.vip_wait_miniapp_url)
                 await cb.message.edit_text(
-                    f"Пришлите VIP Web-app URL для <code>{uid}</code> одним сообщением.\n"
+                    f"Пришлите PLATINUM Web-app URL для <code>{uid}</code> одним сообщением.\n"
                     f"Чтобы очистить, пришлите «-».")
                 await cb.answer();
                 return
@@ -1369,7 +1369,7 @@ async def run_child_bot(tenant: Tenant):
                 finally:
                     db.close()
                 await cb.message.edit_text(
-                    "↩️ Вернул обычную мини-апп. Теперь «Получить сигнал» открывает не-VIP версию.",
+                    "↩️ Вернул обычную мини-апп. Теперь «Получить сигнал» открывает не-PLATINUM версию.",
                     reply_markup=kb_admin_main()
                 )
                 await cb.answer("Готово");
@@ -1413,7 +1413,7 @@ async def run_child_bot(tenant: Tenant):
                 await bot.send_message(uid, text, reply_markup=kb)
             except Exception:
                 pass
-            await cb.answer("VIP включён");
+            await cb.answer("PLATINUM включён");
             return
 
         if data.startswith("adm:vip:unset:"):
@@ -1432,14 +1432,14 @@ async def run_child_bot(tenant: Tenant):
                     print(f"[vip unset render_main] {e}")
             finally:
                 db.close()
-            await cb.answer("VIP выключен");
+            await cb.answer("PLATINUM выключен");
             return
 
         if data.startswith("adm:vip:url:ask:"):
             uid = int(data.rsplit(":", 1)[-1])
             await state.update_data(vip_user_id=uid)
             await state.set_state(AdminForm.vip_wait_url)
-            await cb.message.edit_text(f"Пришлите VIP Web-app URL для <code>{uid}</code> одним сообщением.")
+            await cb.message.edit_text(f"Пришлите PLATINUM Web-app URL для <code>{uid}</code> одним сообщением.")
             await cb.answer();
             return
 
@@ -1666,7 +1666,7 @@ async def run_child_bot(tenant: Tenant):
         finally:
             db.close()
         await state.clear()
-        await msg.answer(f"✅ Порог VIP обновлён: ${val}.", reply_markup=kb_admin_main())
+        await msg.answer(f"✅ Порог PLATINUM обновлён: ${val}.", reply_markup=kb_admin_main())
 
     @r.message(AdminForm.vip_wait_user_id)
     async def vip_receive_user_id(msg: Message, state: FSMContext):
@@ -1685,16 +1685,16 @@ async def run_child_bot(tenant: Tenant):
                 return
             total = get_deposit_total(db, tenant.id, u)
             kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Включить VIP", callback_data=f"adm:vip:set:{uid}"),
-                 InlineKeyboardButton(text="❌ Выключить VIP", callback_data=f"adm:vip:unset:{uid}")],
-                [InlineKeyboardButton(text="✏️ Задать VIP URL", callback_data=f"adm:vip:url:ask:{uid}")],
+                [InlineKeyboardButton(text="✅ Включить PLATINUM", callback_data=f"adm:vip:set:{uid}"),
+                 InlineKeyboardButton(text="❌ Выключить PLATINUM", callback_data=f"adm:vip:unset:{uid}")],
+                [InlineKeyboardButton(text="✏️ Задать PLATINUM URL", callback_data=f"adm:vip:url:ask:{uid}")],
                 [InlineKeyboardButton(text="🗑 Очистить URL", callback_data=f"adm:vip:url:clear:{uid}")],
                 [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip")],
             ])
             txt = (
                 f"<b>Пользователь</b> <code>{uid}</code>\n"
-                f"VIP: {'✅' if u.is_vip else '❌'}\n"
-                f"VIP URL: {u.vip_miniapp_url or '—'}\n"
+                f"PLATINUM: {'✅' if u.is_vip else '❌'}\n"
+                f"PLATINUM URL: {u.vip_miniapp_url or '—'}\n"
                 f"Сумма депозитов: ${total}"
             )
             await msg.answer(txt, reply_markup=kb, disable_web_page_preview=True)
@@ -1807,7 +1807,7 @@ async def run_child_bot(tenant: Tenant):
         finally:
             db.close()
         await state.clear()
-        await msg.answer("✅ VIP URL сохранён.", reply_markup=kb_admin_main())
+        await msg.answer("✅ PLATINUM URL сохранён.", reply_markup=kb_admin_main())
 
     @r.message(AdminForm.vip_wait_miniapp_url)
     async def vip_set_miniapp_from_menu(msg: Message, state: FSMContext):

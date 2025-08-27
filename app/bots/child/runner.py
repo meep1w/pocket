@@ -36,7 +36,7 @@ async def _ensure_parent_bot() -> Bot:
 
 
 async def _owner_is_member(owner_tg_id: int) -> bool:
-    """Проверяем, что владелеВц состоит в приватном канале. Если канал не задан — пропускаем проверку."""
+    """Проверяем, что владелец состоит в приватном канале. Если канал не задан — пропускаем проверку."""
     if not _need_owner_membership_check():
         return True
     try:

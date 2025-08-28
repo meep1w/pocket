@@ -39,9 +39,40 @@ DEFAULT_TEXTS = {
     "lang": {"ru": "Выберите язык", "en": "Choose your language"},
     "main": {"ru": "Главное меню", "en": "Main menu"},
     "guide": {
-        "ru": "Ниже инструкция.",
-        "en": "Instruction below.",
+        "ru": (
+            "1. Зарегистрируйте аккаунт на брокере {{ref}}, обязательно через нашего бота, "
+            "для этого введите /start > Получить сигнал > Зарегистрироваться\n"
+            "2. Ожидайте автоматической проверки регистрации, бот вас оповестит.\n"
+            "3. После успешной проверки внесите депозит, для этого введите /start > Получить сигнал > Внести депозит\n"
+            "4. Ожидайте автоматической проверки депозита, бот вас оповестит.\n"
+            "5. Нажмите «Получить сигнал».\n"
+            "6. Выберите инструмент для торговли в первой строчке интерфейса бота.\n"
+            "7. Дублируйте этот инструмент на брокере {{ref}}.\n"
+            "8. Выберите модель торговли TESSA Plus для обычных пользователей, TESSA Quantum для платинум пользователей.\n"
+            "9. Выберите любое время экспирации.\n"
+            "10. Дублируйте тоже самое время экспирации на брокере {{ref}}.\n"
+            "11. Нажмите кнопку «Сгенерировать сигнал» и торгуйте строго исходя из аналитики бота, старайтесь подбирать более высокую вероятность.\n"
+            "12. Заработайте профит."
+        ),
+        "en": (
+            "1. Register an account on the broker {{ref}}, be sure to use our bot, "
+            "to do this, enter /start > Receive signal > Register\n"
+            "2. Expect automatic registration verification, and the bot will notify you.\n"
+            "3. After successful verification, make a deposit by entering /start > Receive signal > Make a deposit \n"
+            "4. Wait for the automatic verification of the deposit, the bot will notify you.\n"
+            "5. Click «Receive signal».\n"
+            "6. Select a trading tool in the first line of the bot interface.\n"
+            "7. Duplicate this tool on the broker {{ref}}."
+            "8. Select the trading model TESSA Plus for regular users, TESSA Quantum for platinum users.\n"
+            "9. Select any expiration time.\n"
+            "10. Duplicate the same expiration time on the broker {{ref}}"
+            "11. Click the «Generate signal» button and trade strictly based on the bot's analytics, try to select a higher probability.\n"
+            "12. Earn a profit."
+        ),
     },
+
+
+
     "subscribe": {
         "ru": "Для начала подпишитесь на канал.\n\nПосле подписки вернитесь в бот.",
         "en": "First, subscribe to the channel.\n\nAfter subscribing, return to the bot.",
@@ -59,6 +90,20 @@ DEFAULT_TEXTS = {
         "en": "🎉 Access granted. Press “Get signal”."
     },
 }
+
+def apply_placeholders(text: str, tenant: Tenant) -> str:
+    """
+    Подставляет реф-ссылку в {{ref}}.
+    Если у тенанта нет ref_link — оставляем просто текст 'PocketOption' без ссылки.
+    """
+    ref = (getattr(tenant, "ref_link", None) or "").strip()
+    if "{{ref}}" in text:
+        if ref:
+            # делаем кликабельным: HTML парсинг включён у бота
+            return text.replace("{{ref}}", f'<a href="{ref}">PocketOption</a>')
+        else:
+            return text.replace("{{ref}}", "PocketOption")
+    return text
 
 
 def key_title(key: str, locale: str) -> str:
@@ -402,10 +447,12 @@ async def render_guide(bot: Bot, tenant: Tenant, user: User):
     try:
         locale = user.lang or tenant.lang_default or "ru"
         t, i = tget(db, tenant.id, "guide", locale, default_text("guide", locale))
+        t = apply_placeholders(t, tenant)   # <-- ВАЖНО: подставим {{ref}}
         await send_screen(bot, user, "guide", locale, t, kb_back(locale), i)
         db.commit()
     finally:
         db.close()
+
 
 
 async def render_subscribe(bot: Bot, tenant: Tenant, user: User):
@@ -1146,7 +1193,7 @@ async def run_child_bot(tenant: Tenant):
                     [InlineKeyboardButton(text="✅ Выдать PLATINUM доступ", callback_data="adm:vip:grant")],
                     [InlineKeyboardButton(text="🛠 Изменить мини-апп (для имеющих доступ)",
                                           callback_data="adm:vip:miniapp")],
-                    [InlineKeyboardButton(text="🎯 Задать порог VIP", callback_data="adm:vip:thr")],
+                    [InlineKeyboardButton(text="🎯 Задать порог PLATINUM", callback_data="adm:vip:thr")],
                     [InlineKeyboardButton(text="🆔 Управление по TG ID", callback_data="adm:vip:byid")],
                     [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:menu")],
                 ]

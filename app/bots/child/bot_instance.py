@@ -454,7 +454,7 @@ async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool 
         # Шаг 1 — Регистрация
         if user.step in (UserStep.new, UserStep.asked_reg):
             text, img = tget(db, tenant.id, "step1", locale, default_text("step1", locale))
-            url = f"{settings.service_host}/r/reg?tenant_id={tenant.id}&uid={user.tg_user_id}"
+            url = f"{settings.service_host}/pocketoption/reg?tenant_id={tenant.id}&uid={user.tg_user_id}"
             btn_main = tget_label(db, tenant.id, "btn_main", locale)
             kb = InlineKeyboardMarkup(
                 inline_keyboard=[
@@ -494,7 +494,7 @@ async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool 
         except Exception as e:
             print(f"[vip-notify] {e}")
 
-        url = f"{settings.service_host}/r/dep?tenant_id={tenant.id}&uid={user.tg_user_id}"
+        url = f"{settings.service_host}/pocketoption/dep?tenant_id={tenant.id}&uid={user.tg_user_id}"
         btn_main = tget_label(db, tenant.id, "btn_main", locale)
         kb = InlineKeyboardMarkup(
             inline_keyboard=[

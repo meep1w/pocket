@@ -26,86 +26,107 @@ from pathlib import Path
 
 # ---------------------- ЭКРАНЫ / КЛЮЧИ ----------------------
 KEYS: List[Tuple[str, dict]] = [
-    ("lang",       {"ru": "Выбор языка",        "en": "Language"}),
-    ("main",       {"ru": "Главное меню",       "en": "Main menu"}),
-    ("guide",      {"ru": "Инструкция",         "en": "Instruction"}),
-    ("subscribe",  {"ru": "Подписка на канал",  "en": "Subscribe"}),
-    ("step1",      {"ru": "Шаг 1. Регистрация", "en": "Step 1. Registration"}),
-    ("step2",      {"ru": "Шаг 2. Депозит",     "en": "Step 2. Deposit"}),
-    ("unlocked",   {"ru": "Доступ открыт",      "en": "Access granted"}),
+    ("lang",       {"ru": "Выбор языка",        "en": "Language", "hi": "भाषा चुनें",     "es": "Idioma"}),
+    ("main",       {"ru": "Главное меню",       "en": "Main menu", "hi": "मुख्य मेनू",     "es": "Menú principal"}),
+    ("guide",      {"ru": "Инструкция",         "en": "Instruction", "hi": "निर्देश",     "es": "Instrucciones"}),
+    ("subscribe",  {"ru": "Подписка на канал",  "en": "Subscribe",   "hi": "सदस्यता लें", "es": "Suscribirse"}),
+    ("step1",      {"ru": "Шаг 1. Регистрация", "en": "Step 1. Registration", "hi": "चरण 1. पंजीकरण", "es": "Paso 1. Registro"}),
+    ("step2",      {"ru": "Шаг 2. Депозит",     "en": "Step 2. Deposit", "hi": "चरण 2. जमा", "es": "Paso 2. Depósito"}),
+    ("unlocked",   {"ru": "Доступ открыт",      "en": "Access granted", "hi": "प्रवेश मिला", "es": "Acceso concedido"}),
 
     # --- Кнопки (кастомизируемые из админки «Контент»)
-    ("btn_main",          {"ru": "Кнопка: Главное меню",   "en": "Button: Main menu"}),
-    ("btn_instruction",   {"ru": "Кнопка: Инструкция",     "en": "Button: Instruction"}),
-    ("btn_get_signal",    {"ru": "Кнопка: Получить сигнал","en": "Button: Get signal"}),
-    ("btn_support",       {"ru": "Кнопка: Поддержка",      "en": "Button: Support"}),
-    ("btn_change_lang",   {"ru": "Кнопка: Сменить язык",   "en": "Button: Change language"}),
-    ("btn_go_channel",    {"ru": "Кнопка: Перейти в канал","en": "Button: Go to channel"}),
-    ("btn_ive_subscribed",{"ru": "Кнопка: Я подписался",   "en": "Button: I've subscribed"}),
+    ("btn_main",          {"ru": "Кнопка: Главное меню",   "en": "Button: Main menu", "hi": "बटन: मुख्य मेनू", "es": "Botón: Menú principal"}),
+    ("btn_instruction",   {"ru": "Кнопка: Инструкция",     "en": "Button: Instruction", "hi": "बटन: निर्देश", "es": "Botón: Instrucciones"}),
+    ("btn_get_signal",    {"ru": "Кнопка: Получить сигнал","en": "Button: Get signal", "hi": "बटन: सिग्नल प्राप्त करें", "es": "Botón: Obtener señal"}),
+    ("btn_support",       {"ru": "Кнопка: Поддержка",      "en": "Button: Support", "hi": "बटन: समर्थन", "es": "Botón: Soporte"}),
+    ("btn_change_lang",   {"ru": "Кнопка: Сменить язык",   "en": "Button: Change language", "hi": "बटन: भाषा बदलें", "es": "Botón: Cambiar idioma"}),
+    ("btn_go_channel",    {"ru": "Кнопка: Перейти в канал","en": "Button: Go to channel", "hi": "बटन: चैनल पर जाएं", "es": "Botón: Ir al canal"}),
+    ("btn_ive_subscribed",{"ru": "Кнопка: Я подписался",   "en": "Button: I've subscribed", "hi": "बटन: मैंने सदस्यता ली", "es": "Botón: Ya me suscribí"}),
 ]
 
+# ---------------------- ДЕФОЛТНЫЕ ТЕКСТЫ ----------------------
 DEFAULT_TEXTS = {
     # --- Экраны
-    "lang": {"ru": "Выберите язык", "en": "Choose your language"},
-    "main": {"ru": "Главное меню", "en": "Main menu"},
+    "lang": {
+        "ru": "Выберите язык",
+        "en": "Choose your language",
+        "hi": "भाषा चुनें",
+        "es": "Elige tu idioma",
+    },
+    "main": {
+        "ru": "Главное меню",
+        "en": "Main menu",
+        "hi": "मुख्य मेनू",
+        "es": "Menú principal",
+    },
     "guide": {
         "ru": (
-            "1. Зарегистрируйте аккаунт на брокере {{ref}}, обязательно через нашего бота, "
-            "для этого введите /start > Получить сигнал > Зарегистрироваться\n"
-            "2. Ожидайте автоматической проверки регистрации, бот вас оповестит.\n"
-            "3. После успешной проверки внесите депозит, для этого введите /start > Получить сигнал > Внести депозит\n"
-            "4. Ожидайте автоматической проверки депозита, бот вас оповестит.\n"
-            "5. Нажмите «Получить сигнал».\n"
-            "6. Выберите инструмент для торговли в первой строчке интерфейса бота.\n"
-            "7. Дублируйте этот инструмент на брокере {{ref}}.\n"
-            "8. Выберите модель торговли TESSA Plus для обычных пользователей, TESSA Quantum для платинум пользователей.\n"
-            "9. Выберите любое время экспирации.\n"
-            "10. Дублируйте тоже самое время экспирации на брокере {{ref}}.\n"
-            "11. Нажмите кнопку «Сгенерировать сигнал» и торгуйте строго исходя из аналитики бота, старайтесь подбирать более высокую вероятность.\n"
+            "1. Зарегистрируйте аккаунт на брокере {{ref}}, обязательно через нашего бота...\n"
             "12. Заработайте профит."
         ),
         "en": (
-            "1. Register an account on the broker {{ref}}, be sure to use our bot, "
-            "to do this, enter /start > Receive signal > Register\n"
-            "2. Expect automatic registration verification, and the bot will notify you.\n"
-            "3. After successful verification, make a deposit by entering /start > Receive signal > Make a deposit \n"
-            "4. Wait for the automatic verification of the deposit, the bot will notify you.\n"
-            "5. Click «Receive signal».\n"
-            "6. Select a trading tool in the first line of the bot interface.\n"
-            "7. Duplicate this tool on the broker {{ref}}."
-            "8. Select the trading model TESSA Plus for regular users, TESSA Quantum for platinum users.\n"
-            "9. Select any expiration time.\n"
-            "10. Duplicate the same expiration time on the broker {{ref}}"
-            "11. Click the «Generate signal» button and trade strictly based on the bot's analytics, try to select a higher probability.\n"
+            "1. Register an account on the broker {{ref}}, using our bot...\n"
             "12. Earn a profit."
         ),
+        "hi": (
+            "1. ब्रोकर {{ref}} पर खाता पंजीकृत करें, हमारे बॉट का उपयोग करके...\n"
+            "12. लाभ कमाएँ।"
+        ),
+        "es": (
+            "1. Registra una cuenta en el bróker {{ref}}, usando nuestro bot...\n"
+            "12. Obtén ganancias."
+        ),
     },
+
     "subscribe": {
         "ru": "Для начала подпишитесь на канал.\n\nПосле подписки вернитесь в бот.",
         "en": "First, subscribe to the channel.\n\nAfter subscribing, return to the bot.",
+        "hi": "पहले चैनल को सब्सक्राइब करें।\n\nसदस्यता लेने के बाद बॉट में वापस आएँ।",
+        "es": "Primero, suscríbete al canal.\n\nDespués de suscribirte, regresa al bot.",
     },
     "step1": {
         "ru": "⚡️Регистрация\n\nДля получения сигналов нужно зарегистрироваться по нашей ссылке.",
         "en": "⚡️Registration\n\nTo receive signals, you need to register via our link.",
+        "hi": "⚡️पंजीकरण\n\nसिग्नल पाने के लिए आपको हमारी लिंक से पंजीकरण करना होगा।",
+        "es": "⚡️Registro\n\nPara recibir señales, debes registrarte con nuestro enlace.",
     },
     "step2": {
         "ru": "⚡️Внесите депозит: ${{min_dep}}.",
         "en": "⚡️Make a deposit: ${{min_dep}}.",
+        "hi": "⚡️जमा करें: ${{min_dep}}.",
+        "es": "⚡️Haz un depósito: ${{min_dep}}.",
     },
     "unlocked": {
         "ru": "🎉 Доступ открыт. Нажмите «Получить сигнал».",
-        "en": "🎉 Access granted. Press “Get signal”."
+        "en": "🎉 Access granted. Press “Get signal”.",
+        "hi": "🎉 एक्सेस मिल गया। “सिग्नल प्राप्त करें” दबाएँ।",
+        "es": "🎉 Acceso concedido. Pulsa “Obtener señal”.",
     },
 
-    # --- Кнопки (дефолтные подписи RU/EN)
-    "btn_main":          {"ru": "🏠 Главное меню",   "en": "🏠 Main menu"},
-    "btn_instruction":   {"ru": "📘 Инструкция",     "en": "📘 Instruction"},
-    "btn_get_signal":    {"ru": "📈 Получить сигнал","en": "📈 Get signal"},
-    "btn_support":       {"ru": "🆘 Поддержка",      "en": "🆘 Support"},
-    "btn_change_lang":   {"ru": "🌐 Сменить язык",   "en": "🌐 Change language"},
-    "btn_go_channel":    {"ru": "🚀 Перейти в канал","en": "🚀 Go to channel"},
-    "btn_ive_subscribed":{"ru": "✅ Я подписался",   "en": "✅ I've subscribed"},
+    # --- Кнопки (дефолтные подписи RU/EN/HI/ES)
+    "btn_main": {
+        "ru": "🏠 Главное меню", "en": "🏠 Main menu", "hi": "🏠 मुख्य मेनू", "es": "🏠 Menú principal"
+    },
+    "btn_instruction": {
+        "ru": "📘 Инструкция", "en": "📘 Instruction", "hi": "📘 निर्देश", "es": "📘 Instrucciones"
+    },
+    "btn_get_signal": {
+        "ru": "📈 Получить сигнал", "en": "📈 Get signal", "hi": "📈 सिग्नल प्राप्त करें", "es": "📈 Obtener señal"
+    },
+    "btn_support": {
+        "ru": "🆘 Поддержка", "en": "🆘 Support", "hi": "🆘 समर्थन", "es": "🆘 Soporte"
+    },
+    "btn_change_lang": {
+        "ru": "🌐 Сменить язык", "en": "🌐 Change language", "hi": "🌐 भाषा बदलें", "es": "🌐 Cambiar idioma"
+    },
+    "btn_go_channel": {
+        "ru": "🚀 Перейти в канал", "en": "🚀 Go to channel", "hi": "🚀 चैनल पर जाएँ", "es": "🚀 Ir al canal"
+    },
+    "btn_ive_subscribed": {
+        "ru": "✅ Я подписался", "en": "✅ I've subscribed", "hi": "✅ मैंने सदस्यता ली", "es": "✅ Ya me suscribí"
+    },
 }
+
 
 def apply_placeholders(text: str, tenant: Tenant) -> str:
     ref = (getattr(tenant, "ref_link", None) or "").strip()
@@ -116,25 +137,41 @@ def apply_placeholders(text: str, tenant: Tenant) -> str:
             return text.replace("{{ref}}", "PocketOption")
     return text
 
+
 def key_title(key: str, locale: str) -> str:
     for k, names in KEYS:
         if k == key:
             return names.get(locale, k)
     return key
 
+
 def default_text(key: str, locale: str) -> str:
-    return DEFAULT_TEXTS.get(key, {}).get(locale, key)
+    # если нет локали — берём en
+    return DEFAULT_TEXTS.get(key, {}).get(locale) or DEFAULT_TEXTS.get(key, {}).get("en", key)
+
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
+
 def _find_stock_file(key: str, locale: str) -> Path | None:
+    """
+    Для hi/es используем картинки от en, если своих нет.
+    """
     stock = _project_root() / "static" / "stock"
+    # сначала пробуем точную локаль
     for ext in ("jpg", "jpeg", "png", "webp"):
         p = stock / f"{key}-{locale}.{ext}"
         if p.exists():
             return p
+    # фолбэк на en
+    if locale in ("hi", "es"):
+        for ext in ("jpg", "jpeg", "png", "webp"):
+            p = stock / f"{key}-en.{ext}"
+            if p.exists():
+                return p
     return None
+
 
 # ---------------------- ПОДПИСКА ----------------------
 def _as_chat_ident(channel_url: str) -> Optional[str]:
@@ -152,6 +189,7 @@ def _as_chat_ident(channel_url: str) -> Optional[str]:
             return f"@{name}"
     return None
 
+
 async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
     ident = _as_chat_ident(channel_url or "")
     if not ident:
@@ -164,6 +202,7 @@ async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
         print(f"[subscribe-check] error: {e}")
         return True
 
+
 # ---------------------- УТИЛЫ ДЛЯ СВЕЖИХ ДАННЫХ ----------------------
 def tget(db, tenant_id: int, key: str, locale: str, fallback_text: str):
     tt = db.query(TenantText).filter(
@@ -173,10 +212,12 @@ def tget(db, tenant_id: int, key: str, locale: str, fallback_text: str):
     ).first()
     return (tt.text if tt and tt.text else fallback_text), (tt.image_file_id if tt else None)
 
+
 def tget_label(db, tenant_id: int, key: str, locale: str) -> str:
     # для кнопок — только текстовая часть
     txt, _ = tget(db, tenant_id, key, locale, default_text(key, locale))
     return txt
+
 
 def get_cfg(db: SessionLocal, tenant_id: int) -> TenantConfig:
     cfg = db.query(TenantConfig).filter(TenantConfig.tenant_id == tenant_id).first()
@@ -193,15 +234,19 @@ def get_cfg(db: SessionLocal, tenant_id: int) -> TenantConfig:
         db.refresh(cfg)
     if getattr(cfg, "require_subscription", None) is None:
         cfg.require_subscription = False
-        db.commit(); db.refresh(cfg)
+        db.commit();
+        db.refresh(cfg)
     if getattr(cfg, "vip_threshold", None) is None:
         cfg.vip_threshold = 500
-        db.commit(); db.refresh(cfg)
+        db.commit();
+        db.refresh(cfg)
     return cfg
+
 
 def get_fresh_tenant(db: SessionLocal, tenant_id: int) -> Tenant:
     # всегда берём свежие данные (support_url/miniapp_url/ref_link/channel_url)
     return db.query(Tenant).filter(Tenant.id == tenant_id).first()
+
 
 def get_deposit_total(db, tenant_id: int, user: User) -> int:
     total = db.query(func.coalesce(func.sum(Postback.sum), 0)).filter(
@@ -212,6 +257,8 @@ def get_deposit_total(db, tenant_id: int, user: User) -> int:
     ).scalar() or 0
     return int(total)
 
+
+# -------------------------- ОТПРАВКА ЭКРАНА --------------------------
 # -------------------------- ОТПРАВКА ЭКРАНА --------------------------
 async def send_screen(bot, user, key: str, locale: str, text: str, kb, image_file_id: str | None):
     await safe_delete_message(bot, user.tg_user_id, user.last_message_id)
@@ -294,9 +341,13 @@ def kb_back_text(btn_main_text: str):
 def kb_lang(current: Optional[str], btn_main_text: str):
     ru = ("✅ " if current == "ru" else "") + "🇷🇺 Русский"
     en = ("✅ " if current == "en" else "") + "🇬🇧 English"
+    hi = ("✅ " if current == "hi" else "") + "🇮🇳 हिन्दी"
+    es = ("✅ " if current == "es" else "") + "🇪🇸 Español"
     rows = [
         [InlineKeyboardButton(text=ru, callback_data="lang:ru"),
          InlineKeyboardButton(text=en, callback_data="lang:en")],
+        [InlineKeyboardButton(text=hi, callback_data="lang:hi"),
+         InlineKeyboardButton(text=es, callback_data="lang:es")],
         [InlineKeyboardButton(text=btn_main_text, callback_data="menu:main")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -321,13 +372,16 @@ def kb_subscribe(locale: str, channel_url: str, btn_go_channel: str, btn_ive_sub
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
+
+# --------------------------- РЕНДЕР ЭКРАНОВ: UI ---------------------------
 # --------------------------- РЕНДЕР ЭКРАНОВ: UI ---------------------------
 async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang: Optional[str]):
     db = SessionLocal()
     try:
-        # берём свежего тенанта только для контента (на всякий случай)
+        # берём свежего тенанта (актуальные support/channel/miniapp)
         tenant = get_fresh_tenant(db, tenant.id) or tenant
 
+        # локаль: текущая (если уже была) или дефолт тенанта, иначе ru
         locale = (current_lang or tenant.lang_default or "ru").lower()
         text, img = tget(db, tenant.id, "lang", locale, default_text("lang", locale))
         btn_main = tget_label(db, tenant.id, "btn_main", locale)
@@ -355,7 +409,6 @@ async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang:
 async def render_main(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
     try:
-        # СВЕЖИЕ ДАННЫЕ тенанта → обновится support_url/miniapp_url/etc
         tenant = get_fresh_tenant(db, tenant.id) or tenant
 
         locale = user.lang or tenant.lang_default or "ru"
@@ -410,6 +463,11 @@ async def render_subscribe(bot: Bot, tenant: Tenant, user: User):
         db.close()
 
 async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool = False):
+    """
+    Экран «Получить сигнал»:
+    - проверяет подписку/регистрацию/депозит и двигает по шагам,
+    - если доступ уже открыт — показываем одноразовый «unlocked» (или сразу главное меню).
+    """
     db = SessionLocal()
     try:
         tenant = get_fresh_tenant(db, tenant.id) or tenant
@@ -454,11 +512,13 @@ async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool 
         # Шаг 1 — Регистрация
         if user.step in (UserStep.new, UserStep.asked_reg):
             text, img = tget(db, tenant.id, "step1", locale, default_text("step1", locale))
+            # красивые пользовательские пути → nginx перепишет в /r/reg
             url = f"{settings.service_host}/pocketoption/reg?tenant_id={tenant.id}&uid={user.tg_user_id}"
             btn_main = tget_label(db, tenant.id, "btn_main", locale)
             kb = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text=("🟢  Зарегистрироваться" if locale == "ru" else "🟢  Register"), url=url)],
+                    [InlineKeyboardButton(text=("🟢  Зарегистрироваться" if locale == "ru" else
+                                                "🟢  Register"), url=url)],
                     [InlineKeyboardButton(text=btn_main, callback_data="menu:main")],
                 ]
             )
@@ -487,13 +547,16 @@ async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool 
                 msg_txt = (
                     "🎉 Поздравляем! Вам доступен премиум-бот. Напишите в поддержку для подключения."
                     if locale == "ru" else
-                    "🎉 Congrats! You’re eligible for the premium bot. Please contact support to get access."
+                    ("🎉 Congrats! You’re eligible for the premium bot. Please contact support to get access."
+                     if locale in ("en", "es", "hi") else
+                     "🎉 Congrats! You’re eligible for the premium bot. Please contact support to get access.")
                 )
                 await bot.send_message(user.tg_user_id, msg_txt)
                 user.vip_notified = True
         except Exception as e:
             print(f"[vip-notify] {e}")
 
+        # красивые пользовательские пути → nginx перепишет в /r/dep
         url = f"{settings.service_host}/pocketoption/dep?tenant_id={tenant.id}&uid={user.tg_user_id}"
         btn_main = tget_label(db, tenant.id, "btn_main", locale)
         kb = InlineKeyboardMarkup(
@@ -557,6 +620,7 @@ class AdminForm(StatesGroup):
     bcast_confirm = State()
 
     params_wait_min_dep = State()
+
 
 # ----------------------------- АДМИН КНОПКИ/МЕНЮ -----------------------------
 def kb_admin_main():
@@ -704,7 +768,6 @@ async def run_child_bot(tenant: Tenant):
         finally:
             db.close()
 
-    # --- выбор языка (после клика на RU/EN)
     @r.callback_query(F.data.startswith("lang:"))
     async def on_lang_select(cb: CallbackQuery):
         db = SessionLocal()
@@ -718,7 +781,7 @@ async def run_child_bot(tenant: Tenant):
                 return
 
             locale = (cb.data or "").split(":")[1]
-            if locale not in ("ru", "en"):
+            if locale not in ("ru", "en", "hi", "es"):
                 await cb.answer()
                 return
 
@@ -726,7 +789,7 @@ async def run_child_bot(tenant: Tenant):
             db.commit()
 
             await render_main(bot, tenant, user)
-            await cb.answer("Язык сохранён")
+            await cb.answer("Language saved")
         finally:
             db.close()
 
@@ -768,7 +831,6 @@ async def run_child_bot(tenant: Tenant):
             if not user:
                 return
 
-            # возьмём свежий btn_main
             locale = (user.lang or "ru")
             btn_main = tget_label(db, tenant.id, "btn_main", locale)
             await render_lang_screen(bot, tenant, user, user.lang)
@@ -1836,12 +1898,11 @@ async def run_child_bot(tenant: Tenant):
 async def recompute_and_route(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
     try:
-        # свежие данные для подписки/мини-аппы и др.
+        # всегда берём «свежего» тенанта (support_url/miniapp_url/channel_url/…)
         tenant = get_fresh_tenant(db, tenant.id) or tenant
         cfg = get_cfg(db, tenant.id)
-        locale = user.lang or tenant.lang_default or "ru"
 
-        # 1) Подписка (если включена и канал задан)
+        # 1) Подписка (если включена)
         if getattr(cfg, "require_subscription", False):
             ok = await is_user_subscribed(bot, tenant.channel_url or "", user.tg_user_id)
             if not ok:
@@ -1849,25 +1910,9 @@ async def recompute_and_route(bot: Bot, tenant: Tenant, user: User):
                 db.commit()
                 return
 
-        # 2) Регистрация / Депозит
-        if user.step in (UserStep.new, UserStep.asked_reg):
-            await render_get(bot, tenant, user)
-            db.commit()
-            return
-
-        if cfg.require_deposit and user.step != UserStep.deposited:
-            await render_get(bot, tenant, user)
-            db.commit()
-            return
-
-        # 3) Доступ открыт: показать «unlocked» ровно один раз
-        if not getattr(user, "access_notified", False):
-            await render_get(bot, tenant, user, force_unlocked=True)
-            # render_get сам проставит access_notified = True и сделает commit
-            return
-
-        # 4) Обычное главное меню
-        await render_main(bot, tenant, user)
+        # 2) Дальше всё решает render_get: шаги reg/dep, unlocked (1 раз), или main
+        await render_get(bot, tenant, user)
         db.commit()
     finally:
         db.close()
+

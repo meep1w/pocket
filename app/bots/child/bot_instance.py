@@ -885,16 +885,32 @@ async def run_child_bot(tenant: Tenant):
             db.close()
 
     # -------- ADMIN --------
-    def owner_only(uid: int) -> bool:
-        return uid == tenant.owner_tg_id  # только владелец этого тенанта
+    def is_owner_or_ga(db: SessionLocal, tenant_id: int, uid: int) -> bool:
+        """Проверка прав админа с актуальными данными: владелец тенанта ИЛИ глобальный админ из GA_ADMIN_IDS."""
+        try:
+            t = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+            if t and t.owner_tg_id and int(t.owner_tg_id) == int(uid):
+                return True
+        except Exception:
+            pass
+        # глобальные админы из .env (app/settings.py)
+        try:
+            return int(uid) in (settings.ga_admin_ids or [])
+        except Exception:
+            return False
 
     @r.message(Command("admin"))
     async def admin_entry(msg: Message, state: FSMContext):
-        if not owner_only(msg.from_user.id):
-            await msg.answer("⛔️ Нет доступа (вы не владелец этого бота)")
-            return
-        await state.clear()
-        await msg.answer("<b>Админ-панель</b>", reply_markup=kb_admin_main())
+        db = SessionLocal()
+        try:
+            if not is_owner_or_ga(db, tenant.id, msg.from_user.id):
+                # Явно отвечаем, чтобы было понятно, что происходит
+                await msg.answer("⛔️ Нет доступа (вы не владелец/админ этого бота)")
+                return
+            await state.clear()
+            await msg.answer("<b>Админ-панель</b>", reply_markup=kb_admin_main())
+        finally:
+            db.close()
 
     @r.callback_query(
         lambda c: (

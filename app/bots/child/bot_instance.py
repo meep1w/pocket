@@ -282,12 +282,10 @@ def get_cfg(db: SessionLocal, tenant_id: int) -> TenantConfig:
         db.refresh(cfg)
     if getattr(cfg, "require_subscription", None) is None:
         cfg.require_subscription = False
-        db.commit();
-        db.refresh(cfg)
+        db.commit(); db.refresh(cfg)
     if getattr(cfg, "vip_threshold", None) is None:
         cfg.vip_threshold = 500
-        db.commit();
-        db.refresh(cfg)
+        db.commit(); db.refresh(cfg)
     return cfg
 
 
@@ -306,7 +304,6 @@ def get_deposit_total(db, tenant_id: int, user: User) -> int:
     return int(total)
 
 
-# -------------------------- ОТПРАВКА ЭКРАНА --------------------------
 # -------------------------- ОТПРАВКА ЭКРАНА --------------------------
 async def send_screen(bot, user, key: str, locale: str, text: str, kb, image_file_id: str | None):
     await safe_delete_message(bot, user.tg_user_id, user.last_message_id)
@@ -330,6 +327,7 @@ async def send_screen(bot, user, key: str, locale: str, text: str, kb, image_fil
     m = await bot.send_message(user.tg_user_id, text, reply_markup=kb)
     user.last_message_id = m.message_id
 
+
 # -------------------------- URL МИНИ-АППЫ --------------------------
 def tenant_miniapp_url(tenant: Tenant, user: User) -> str:
     if getattr(user, "vip_miniapp_url", None):
@@ -345,6 +343,7 @@ def tenant_miniapp_url(tenant: Tenant, user: User) -> str:
     base = (tenant.miniapp_url or settings.miniapp_url).rstrip("/")
     return f"{base}?tenant_id={tenant.id}&uid={user.tg_user_id}"
 
+
 # ------------------------------- КНОПКИ -------------------------------
 def _normalize_support_url(u: Optional[str]) -> Optional[str]:
     if not u:
@@ -359,6 +358,7 @@ def _normalize_support_url(u: Optional[str]) -> Optional[str]:
     if u.startswith("t.me/") or "t.me/" in u:
         return "https://" + u.lstrip("/")
     return None
+
 
 def kb_main_with_labels(locale: str, support_url: Optional[str], tenant: Tenant, user: User, has_access: bool,
                         btn_instruction: str, btn_support: str, btn_change_lang: str, btn_get_signal: str):
@@ -383,8 +383,10 @@ def kb_main_with_labels(locale: str, support_url: Optional[str], tenant: Tenant,
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
+
 def kb_back_text(btn_main_text: str):
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=btn_main_text, callback_data="menu:main")]])
+
 
 def kb_lang(current: Optional[str], btn_main_text: str):
     ru = ("✅ " if current == "ru" else "") + "🇷🇺 Русский"
@@ -399,6 +401,7 @@ def kb_lang(current: Optional[str], btn_main_text: str):
         [InlineKeyboardButton(text=btn_main_text, callback_data="menu:main")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 def kb_subscribe(locale: str, channel_url: str, btn_go_channel: str, btn_ive_subscribed: str, btn_main_text: str) -> InlineKeyboardMarkup:
     url_raw = (channel_url or "").strip()
@@ -421,7 +424,6 @@ def kb_subscribe(locale: str, channel_url: str, btn_go_channel: str, btn_ive_sub
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-# --------------------------- РЕНДЕР ЭКРАНОВ: UI ---------------------------
 # --------------------------- РЕНДЕР ЭКРАНОВ: UI ---------------------------
 async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang: Optional[str]):
     db = SessionLocal()
@@ -454,6 +456,7 @@ async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang:
     finally:
         db.close()
 
+
 async def render_main(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
     try:
@@ -480,6 +483,7 @@ async def render_main(bot: Bot, tenant: Tenant, user: User):
     finally:
         db.close()
 
+
 async def render_guide(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
     try:
@@ -492,6 +496,7 @@ async def render_guide(bot: Bot, tenant: Tenant, user: User):
         db.commit()
     finally:
         db.close()
+
 
 async def render_subscribe(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
@@ -509,6 +514,7 @@ async def render_subscribe(bot: Bot, tenant: Tenant, user: User):
         db.commit()
     finally:
         db.close()
+
 
 async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool = False):
     """
@@ -619,6 +625,7 @@ async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool 
     finally:
         db.close()
 
+
 # ------------------------------- MIDDLEWARE -------------------------------
 class TenantGate(BaseMiddleware):
     def __init__(self, tenant_id: int):
@@ -643,6 +650,7 @@ class TenantGate(BaseMiddleware):
         except Exception as e:
             print(f"[TenantGate] error: {e}")
         return await handler(event, data)
+
 
 # --------------------------------- ADMIN FSM ---------------------------------
 class AdminForm(StatesGroup):
@@ -684,6 +692,7 @@ def kb_admin_main():
         ]
     )
 
+
 def kb_admin_links():
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -696,20 +705,26 @@ def kb_admin_links():
         ]
     )
 
+
 def kb_content_lang():
+    # добавлены HI и ES
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🇷🇺 RU", callback_data="adm:cl:ru"),
              InlineKeyboardButton(text="🇬🇧 EN", callback_data="adm:cl:en")],
+            [InlineKeyboardButton(text="🇮🇳 HI", callback_data="adm:cl:hi"),
+             InlineKeyboardButton(text="🇪🇸 ES", callback_data="adm:cl:es")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:menu")],
         ]
     )
+
 
 def kb_content_keys(locale: str):
     rows = [[InlineKeyboardButton(text=f"• {key_title(k, locale)}", callback_data=f"adm:ck:{k}:{locale}")]
             for k, _ in KEYS]
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:content")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 def kb_content_edit(key: str, locale: str):
     return InlineKeyboardMarkup(
@@ -722,6 +737,7 @@ def kb_content_edit(key: str, locale: str):
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:content")],
         ]
     )
+
 
 def kb_params(cfg: TenantConfig):
     req_sub = bool(getattr(cfg, "require_subscription", False))
@@ -746,6 +762,7 @@ def kb_params(cfg: TenantConfig):
         ]
     )
 
+
 def kb_broadcast_segments():
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -758,6 +775,7 @@ def kb_broadcast_segments():
         ]
     )
 
+
 def editor_status_text(db, tenant_id: int, key: str, lang: str) -> str:
     tt = db.query(TenantText).filter(
         TenantText.tenant_id == tenant_id, TenantText.locale == lang, TenantText.key == key
@@ -769,6 +787,7 @@ def editor_status_text(db, tenant_id: int, key: str, lang: str) -> str:
         f"Текст: {text_len} символ(ов)\n"
         f"Картинка: {'есть' if has_img else 'нет'}"
     )
+
 
 # ---------------------------- ЗАПУСК ДЕТСКОГО БОТА ----------------------------
 async def run_child_bot(tenant: Tenant):
@@ -878,9 +897,6 @@ async def run_child_bot(tenant: Tenant):
                                          User.tg_user_id == cb.from_user.id).first()
             if not user:
                 return
-
-            locale = (user.lang or "ru")
-            btn_main = tget_label(db, tenant.id, "btn_main", locale)
             await render_lang_screen(bot, tenant, user, user.lang)
             await cb.answer()
         finally:
@@ -1514,7 +1530,7 @@ async def run_child_bot(tenant: Tenant):
             await cb.message.edit_text("📣 Рассылка: выберите сегмент и пришлите контент.\nЗатем нажмите «Запустить».")
             await cb.answer(); return
 
-        # ----- Запуск рассылки
+            # ----- Запуск рассылки
         if data == "adm:bc:run":
             data_state = await state.get_data()
             seg = data_state.get("bcast_segment", "all")
@@ -1553,21 +1569,28 @@ async def run_child_bot(tenant: Tenant):
                         failed += 1
                     await asyncio.sleep(interval)
 
-                try:
-                    await bot.send_message(tenant.owner_tg_id,
-                                           f"📣 Рассылка завершена. Отправлено: {sent}, ошибок: {failed}.")
-                except Exception:
-                    pass
+                with contextlib.suppress(Exception):
+                    await bot.send_message(
+                        tenant.owner_tg_id,
+                        f"📣 Рассылка завершена. Отправлено: {sent}, ошибок: {failed}."
+                    )
 
             asyncio.create_task(_run_broadcast(seg, text, media_id))
-            await cb.answer(); return
+            await cb.answer();
+            return
 
-    # ---- end admin_router
+            # если что-то иное — просто домой
+        await cb.answer()
+        return
 
-    # ---- Admin: LINK inputs
+        # ---- end admin_router
+
+        # ---- Admin: LINK inputs
+
     @r.message(AdminForm.waiting_support)
     async def on_support_input(msg: Message, state: FSMContext):
-        if not owner_only(msg.from_user.id): return
+        if msg.from_user.id != tenant.owner_tg_id:
+            return
         url = (msg.text or "").strip()
         db = SessionLocal()
         try:
@@ -1581,7 +1604,8 @@ async def run_child_bot(tenant: Tenant):
 
     @r.message(AdminForm.waiting_miniapp)
     async def on_miniapp_input(msg: Message, state: FSMContext):
-        if not owner_only(msg.from_user.id): return
+        if msg.from_user.id != tenant.owner_tg_id:
+            return
         url = (msg.text or "").strip()
         db = SessionLocal()
         try:
@@ -1596,7 +1620,8 @@ async def run_child_bot(tenant: Tenant):
 
     @r.message(AdminForm.waiting_ref)
     async def on_ref_input(msg: Message, state: FSMContext):
-        if not owner_only(msg.from_user.id): return
+        if msg.from_user.id != tenant.owner_tg_id:
+            return
         ref = (msg.text or "").strip()
         db = SessionLocal()
         try:
@@ -1610,7 +1635,8 @@ async def run_child_bot(tenant: Tenant):
 
     @r.message(AdminForm.waiting_dep)
     async def on_dep_input(msg: Message, state: FSMContext):
-        if not owner_only(msg.from_user.id): return
+        if msg.from_user.id != tenant.owner_tg_id:
+            return
         dep = (msg.text or "").strip()
         db = SessionLocal()
         try:
@@ -1624,7 +1650,8 @@ async def run_child_bot(tenant: Tenant):
 
     @r.message(AdminForm.waiting_channel)
     async def on_channel_input(msg: Message, state: FSMContext):
-        if not owner_only(msg.from_user.id): return
+        if msg.from_user.id != tenant.owner_tg_id:
+            return
         url = (msg.text or "").strip()
         db = SessionLocal()
         try:
@@ -1640,7 +1667,8 @@ async def run_child_bot(tenant: Tenant):
     # ---- Admin: Content inputs
     @r.message(AdminForm.content_wait_text)
     async def on_content_text(msg: Message, state: FSMContext):
-        if not owner_only(msg.from_user.id): return
+        if msg.from_user.id != tenant.owner_tg_id:
+            return
         data = await state.get_data()
         lang = data["content_lang"]
         key = data["content_key"]
@@ -1663,7 +1691,8 @@ async def run_child_bot(tenant: Tenant):
 
     @r.message(AdminForm.content_wait_photo)
     async def on_content_photo(msg: Message, state: FSMContext):
-        if not owner_only(msg.from_user.id): return
+        if msg.from_user.id != tenant.owner_tg_id:
+            return
         if not msg.photo:
             await msg.answer("Нужно прислать именно фото.")
             return
@@ -1691,10 +1720,12 @@ async def run_child_bot(tenant: Tenant):
     # ---- Admin: VIP inputs
     @r.message(AdminForm.vip_wait_threshold)
     async def vip_set_threshold(msg: Message, state: FSMContext):
-        if not owner_only(msg.from_user.id): return
+        if msg.from_user.id != tenant.owner_tg_id:
+            return
         try:
             val = int((msg.text or "").strip())
-            if val < 1: raise ValueError
+            if val < 1:
+                raise ValueError
         except Exception:
             await msg.answer("Нужно целое число ≥ 1. Попробуйте ещё раз.")
             return
@@ -1710,7 +1741,8 @@ async def run_child_bot(tenant: Tenant):
 
     @r.message(AdminForm.vip_wait_user_id)
     async def vip_receive_user_id(msg: Message, state: FSMContext):
-        if not owner_only(msg.from_user.id): return
+        if msg.from_user.id != tenant.owner_tg_id:
+            return
         try:
             uid = int((msg.text or "").strip())
         except Exception:
@@ -1744,7 +1776,8 @@ async def run_child_bot(tenant: Tenant):
     @r.callback_query(F.data.startswith("adm:vip:do:reg:"))
     async def adm_vip_do_reg(cb: CallbackQuery):
         if cb.from_user.id != tenant.owner_tg_id:
-            await cb.answer(); return
+            await cb.answer();
+            return
 
         uid = int(cb.data.split(":")[-1])
 
@@ -1752,7 +1785,8 @@ async def run_child_bot(tenant: Tenant):
         try:
             u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
             if not u:
-                await cb.answer("Юзер не найден"); return
+                await cb.answer("Юзер не найден");
+                return
 
             pb = Postback(
                 tenant_id=tenant.id,
@@ -1767,10 +1801,8 @@ async def run_child_bot(tenant: Tenant):
             u.step = UserStep.registered
             db.commit()
 
-            try:
+            with contextlib.suppress(Exception):
                 await render_get(bot, tenant, u)
-            except Exception:
-                pass
 
             await cb.answer("Ок: регистрация проставлена")
             await cb.message.edit_text("✅ Ручной постбэк «Регистрация» установлен.", reply_markup=kb_admin_main())
@@ -1780,7 +1812,7 @@ async def run_child_bot(tenant: Tenant):
     @r.callback_query(F.data.startswith("adm:vip:do:dep:"))
     async def adm_vip_do_dep(cb: CallbackQuery):
         if cb.from_user.id != tenant.owner_tg_id:
-            await cb.answer()
+            await cb.answer();
             return
 
         uid = int(cb.data.split(":")[-1])
@@ -1789,7 +1821,7 @@ async def run_child_bot(tenant: Tenant):
         try:
             u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
             if not u:
-                await cb.answer("Юзер не найден")
+                await cb.answer("Юзер не найден");
                 return
 
             cfg = get_cfg(db, tenant.id)
@@ -1808,10 +1840,8 @@ async def run_child_bot(tenant: Tenant):
             u.step = UserStep.deposited
             db.commit()
 
-            try:
+            with contextlib.suppress(Exception):
                 await render_get(bot, tenant, u, force_unlocked=True)
-            except Exception:
-                pass
 
             await cb.answer("Ок: депозит проставлен")
             await cb.message.edit_text("✅ Ручной постбэк «Депозит» установлен.", reply_markup=kb_admin_main())
@@ -1820,7 +1850,7 @@ async def run_child_bot(tenant: Tenant):
 
     @r.message(AdminForm.vip_wait_url)
     async def vip_set_url(msg: Message, state: FSMContext):
-        if not owner_only(msg.from_user.id):
+        if msg.from_user.id != tenant.owner_tg_id:
             return
         data = await state.get_data()
         uid = data.get("vip_user_id")
@@ -1843,7 +1873,7 @@ async def run_child_bot(tenant: Tenant):
 
     @r.message(AdminForm.vip_wait_miniapp_url)
     async def vip_set_miniapp_from_menu(msg: Message, state: FSMContext):
-        if not owner_only(msg.from_user.id):
+        if msg.from_user.id != tenant.owner_tg_id:
             return
         data = await state.get_data()
         uid = data.get("vip_user_id")
@@ -1872,7 +1902,7 @@ async def run_child_bot(tenant: Tenant):
 
     @r.message(AdminForm.bcast_wait_content)
     async def bcast_collect(msg: Message, state: FSMContext):
-        if not owner_only(msg.from_user.id):
+        if msg.from_user.id != tenant.owner_tg_id:
             return
         data = await state.get_data()
         seg = data["bcast_segment"]
@@ -1893,7 +1923,7 @@ async def run_child_bot(tenant: Tenant):
 
     @r.message(AdminForm.params_wait_min_dep)
     async def param_set_min_value(msg: Message, state: FSMContext):
-        if not owner_only(msg.from_user.id):
+        if msg.from_user.id != tenant.owner_tg_id:
             return
         try:
             val = int((msg.text or "").strip())
@@ -1941,6 +1971,7 @@ async def run_child_bot(tenant: Tenant):
     finally:
         with contextlib.suppress(Exception):
             await bot.session.close()
+
 
 # ---------------------- ПРОГРЕСС (централизованный роутер) ----------------------
 async def recompute_and_route(bot: Bot, tenant: Tenant, user: User):

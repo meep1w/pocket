@@ -1,27 +1,29 @@
 import asyncio
 import signal
-from typing import Dict, Optional, Tuple
+import contextlib
+from typing import Dict, Optional, Tuple, Any
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramUnauthorizedError
-from sqlalchemy import text  # (может пригодиться для ручных SQL; не критично)
 
 from app.db import SessionLocal, engine
 from app.models import Tenant, TenantStatus
 from app.bots.child.bot_instance import run_child_bot
 from app.settings import settings
 
-CHECK_INTERVAL_SEC = 5
 
-# Родительский бот – используем только для проверки членства владельца в канале (если включено)
+# Как часто пересканировать базу
+CHECK_INTERVAL_SEC = 10
+
+# Родительский бот – используется для проверки членства владельца
 _parent_bot: Optional[Bot] = None
 
-# Печатаем информацию о БД один раз после старта
+# Печать диагностики БД один раз
 _DB_DEBUG_DONE = False
 
 
 def _need_owner_membership_check() -> bool:
-    """Включаем проверку только если явно задан private_channel_id."""
+    """Проверяем членство владельца только если явно задан PRIVATE_CHANNEL_ID в .env."""
     try:
         return bool(getattr(settings, "private_channel_id", None))
     except Exception:
@@ -36,14 +38,26 @@ async def _ensure_parent_bot() -> Bot:
 
 
 async def _owner_is_member(owner_tg_id: int) -> bool:
-    """Проверяем, что владелец состоит в приватном канале. Если канал не задан — пропускаем проверку."""
+    """
+    Проверяем, что владелец состоит в приватном канале.
+    Если канал не задан — считаем OK (но у нас политика — задан).
+    """
     if not _need_owner_membership_check():
         return True
     try:
         bot = await _ensure_parent_bot()
-        m = await bot.get_chat_member(settings.private_channel_id, owner_tg_id)
-        return m.status not in ("left", "kicked")
-    except Exception:
+        chat_id = settings.private_channel_id
+        m = await bot.get_chat_member(chat_id, owner_tg_id)
+        ok = m.status not in ("left", "kicked")
+        if not ok:
+            print(f"[runner][membership] NOT MEMBER: owner={owner_tg_id} in chat={chat_id}, status={m.status}")
+        else:
+            # можно раскомментировать, если нужен позитивный лог
+            # print(f"[runner][membership] OK: owner={owner_tg_id} in chat={chat_id}, status={m.status}")
+            pass
+        return ok
+    except Exception as e:
+        print(f"[runner][membership] ERROR chat={getattr(settings,'private_channel_id',None)} owner={owner_tg_id}: {e!r}")
         return False
 
 
@@ -51,7 +65,7 @@ async def _preflight_token(tenant: Tenant) -> bool:
     """
     Быстрая проверка токена перед запуском polling:
     - getMe (ловим Unauthorized)
-    - delete_webhook(drop_pending_updates=True), чтобы убрать возможный вебхук/хвост апдейтов
+    - delete_webhook(drop_pending_updates=True)
     """
     token = (tenant.child_bot_token or "").strip()
     if not token:
@@ -65,21 +79,18 @@ async def _preflight_token(tenant: Tenant) -> bool:
         try:
             await bot.delete_webhook(drop_pending_updates=True)
         except Exception:
-            # не критично, просто идём дальше
             pass
         return True
     except TelegramUnauthorizedError:
         print(f"[runner] preflight FAIL Unauthorized: tenant_id={tenant.id}")
         return False
     except Exception as e:
+        # Не валим на прочих ошибках — дадим шансы run_child_bot
         print(f"[runner] preflight FAIL other: tenant_id={tenant.id} err={e!r}")
-        # не помечаем paused на любое исключение, только на Unauthorized
-        return True  # дадим шанс run_child_bot самому упасть/перезапуститься
+        return True
     finally:
-        try:
+        with contextlib.suppress(Exception):
             await bot.session.close()
-        except Exception:
-            pass
 
 
 def _pause_tenant(tenant_id: int, reason: str = "unauthorized"):
@@ -97,45 +108,69 @@ def _pause_tenant(tenant_id: int, reason: str = "unauthorized"):
         db.close()
 
 
-async def _child_entry(tenant: Tenant):
+def _signature_for(tenant: Tenant) -> Tuple[Any, ...]:
     """
-    Обёртка вокруг run_child_bot — перезапускает ребёнка при любых исключениях.
-    Внутри run_child_bot уже делается delete_webhook(drop_pending_updates=True).
+    Сигнатура, по которой понимаем, что ребёнка надо перезапустить.
+    Используем только критичные поля:
+      - child_bot_token
+      - updated_at (если есть в модели; если нет — будет None)
+    username исключён: он может быть пуст/меняться без критики.
     """
-    print(f"[runner] child starting: tenant_id={tenant.id} username={tenant.child_bot_username}")
+    token = (tenant.child_bot_token or "").strip()
+    upd = None
+    # Не все модели имеют updated_at; проверим безопасно
+    if hasattr(tenant, "updated_at") and getattr(tenant, "updated_at") is not None:
+        try:
+            upd = int(getattr(tenant, "updated_at").timestamp())
+        except Exception:
+            upd = str(getattr(tenant, "updated_at"))
+    return (token, upd)
 
-    # Предполётная проверка токена. Если 401 — автопауза и выходим без бесконечного цикла.
-    ok = await _preflight_token(tenant)
+
+async def _child_entry(tenant_id: int):
+    """
+    Обёртка вокруг run_child_bot — получаем свежего Tenant внутри, перезапускаем при падениях,
+    на Unauthorized — автопауза и выходим.
+    """
+    print(f"[runner] child starting: tenant_id={tenant_id}")
+
+    # Берём свежего тенанта для префлайта
+    db = SessionLocal()
+    try:
+        t = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    finally:
+        db.close()
+    if not t:
+        print(f"[runner] child start skipped: tenant_id={tenant_id} not found")
+        return
+
+    ok = await _preflight_token(t)
     if not ok:
-        _pause_tenant(tenant.id, reason="unauthorized_preflight")
+        _pause_tenant(tenant_id, reason="unauthorized_preflight")
         return
 
     while True:
         try:
-            await run_child_bot(tenant)  # держит polling до остановки
-            print(
-                f"[runner] run_child_bot RETURNED: tenant_id={tenant.id} username={tenant.child_bot_username}; restart in 5s"
-            )
+            # Внутри run_child_bot он сам ещё раз get_me + delete_webhook, потом polling
+            await run_child_bot(t)
+            print(f"[runner] run_child_bot RETURNED: tenant_id={tenant_id}; restart in 5s")
         except asyncio.CancelledError:
-            print(f"[runner] child cancelled: tenant_id={tenant.id} username={tenant.child_bot_username}")
+            print(f"[runner] child cancelled: tenant_id={tenant_id}")
             raise
         except TelegramUnauthorizedError:
-            # Если Unauthorized сорвался уже в процессе — автопауза и выходим
-            print(f"[runner] child Unauthorized during run: tenant_id={tenant.id}")
-            _pause_tenant(tenant.id, reason="unauthorized_during_run")
+            print(f"[runner] child Unauthorized during run: tenant_id={tenant_id}")
+            _pause_tenant(tenant_id, reason="unauthorized_during_run")
             return
         except Exception as e:
-            print(
-                f"[runner] child crashed: tenant_id={tenant.id} username={tenant.child_bot_username} exc={e!r}; restart in 5s"
-            )
+            print(f"[runner] child crashed: tenant_id={tenant_id} exc={e!r}; restart in 5s")
         await asyncio.sleep(5)
 
 
 async def manager_loop():
     global _DB_DEBUG_DONE
+
     # tasks[tenant_id] = (asyncio.Task, signature)
-    # signature = (token, username) — чтобы понимать, что конфиг изменился и ребёнка надо перезапустить
-    tasks: Dict[int, Tuple[asyncio.Task, Tuple[str, str]]] = {}
+    tasks: Dict[int, Tuple[asyncio.Task, Tuple[Any, ...]]] = {}
 
     async def stop_task(tid: int):
         rec = tasks.pop(tid, None)
@@ -144,10 +179,9 @@ async def manager_loop():
         task = rec[0]
         if task and not task.done():
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            except asyncio.CancelledError:
-                pass
+        print(f"[runner] stopped child tenant_id={tid}")
 
     async def ensure_db_debug_once():
         global _DB_DEBUG_DONE
@@ -156,17 +190,17 @@ async def manager_loop():
         try:
             print("[runner][DB] engine.url:", engine.url)
             with engine.connect() as conn:
-                dblist = conn.exec_driver_sql("PRAGMA database_list;").all()
-                print("[runner][DB] PRAGMA database_list:", dblist)
-
-                cols = conn.exec_driver_sql("PRAGMA table_info(tenants);").all()
-                print("[runner][DB] tenants columns:", [c[1] for c in cols])
-
                 try:
-                    _ = conn.exec_driver_sql("SELECT channel_url FROM tenants LIMIT 1;").all()
-                    print("[runner][DB] raw SELECT channel_url: OK")
-                except Exception as e:
-                    print("[runner][DB] raw SELECT channel_url: FAIL ->", repr(e))
+                    dblist = conn.exec_driver_sql("PRAGMA database_list;").all()
+                    print("[runner][DB] PRAGMA database_list:", dblist)
+                except Exception:
+                    # не sqlite — норм
+                    pass
+                try:
+                    cols = conn.exec_driver_sql("PRAGMA table_info(tenants);").all()
+                    print("[runner][DB] tenants columns:", [c[1] for c in cols])
+                except Exception:
+                    pass
         except Exception as e:
             print("[runner][DB] introspection error:", repr(e))
         finally:
@@ -177,7 +211,7 @@ async def manager_loop():
 
         db = SessionLocal()
         try:
-            # 1) Автопауза тенантов, если включена проверка членства владельца
+            # 1) Автопауза активных, если владелец не в канале
             if _need_owner_membership_check():
                 active_for_check = db.query(Tenant).filter(Tenant.status == TenantStatus.active).all()
                 changed = False
@@ -189,40 +223,52 @@ async def manager_loop():
                     if not ok:
                         t.status = TenantStatus.paused
                         changed = True
+                        print(f"[runner] auto-paused tenant_id={t.id} (owner not member)")
                 if changed:
                     db.commit()
 
-            # 2) Считываем актуальные активные тенанты
+            # 2) Список «желательных» активных детей
             active = db.query(Tenant).filter(Tenant.status == TenantStatus.active).all()
-            active_map: Dict[int, Tenant] = {t.id: t for t in active}
-            active_ids = set(active_map.keys())
+            active_ids = {t.id for t in active}
+            active_map = {t.id: t for t in active}
 
             # 3) Остановить тех, кого больше нет в активных
             for tid in list(tasks.keys()):
                 if tid not in active_ids:
                     await stop_task(tid)
 
-            # 4) Старт/рестарт активных:
-            #    - нет задачи → стартуем
-            #    - токен/юзернейм изменились → перезапускаем
+            # 4) Поднять/перезапустить нужных
             for t in active:
+                # Если нет токена — пропустим
                 token = (t.child_bot_token or "").strip()
-                username = (t.child_bot_username or "").strip()
-                signature = (token, username)
+                if not token:
+                    # Если почему-то активен без токена — это нештатно, просто пропускаем
+                    continue
 
+                signature = _signature_for(t)
                 current = tasks.get(t.id)
+
                 if current is None:
-                    # старт нового ребёнка
-                    task = asyncio.create_task(_child_entry(t))
+                    # Новый активный — стартуем
+                    task = asyncio.create_task(_child_entry(t.id), name=f"child-{t.id}")
                     tasks[t.id] = (task, signature)
+                    print(f"[runner] started child tenant_id={t.id}")
                     continue
 
                 task, old_signature = current
+                # Если поменялся токен/updated_at — перезапустим
                 if signature != old_signature:
-                    # конфиг изменился — перезапускаем ребёнка
                     await stop_task(t.id)
-                    task = asyncio.create_task(_child_entry(t))
+                    task = asyncio.create_task(_child_entry(t.id), name=f"child-{t.id}")
                     tasks[t.id] = (task, signature)
+                    print(f"[runner] restarted child tenant_id={t.id} (signature changed)")
+                else:
+                    # Если таска упала — перезапустим
+                    if task.done():
+                        await stop_task(t.id)
+                        task = asyncio.create_task(_child_entry(t.id), name=f"child-{t.id}")
+                        tasks[t.id] = (task, signature)
+                        print(f"[runner] resurrected child tenant_id={t.id} (task done)")
 
         finally:
             db.close()
@@ -240,37 +286,30 @@ def main():
         print(f"[runner] received {sig_name}, shutting down...")
         stop_event.set()
 
-    # ловим SIGINT/SIGTERM для корректной остановки
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, _handle_signal, sig.name)
         except NotImplementedError:
-            # на Windows сигналы могут не поддерживаться
             pass
 
     async def _run():
-        mgr = asyncio.create_task(manager_loop())
+        mgr = asyncio.create_task(manager_loop(), name="children-manager")
         await stop_event.wait()
         mgr.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await mgr
-        except asyncio.CancelledError:
-            pass
-        # закрыть родительского бота
+
+        # Закрыть parent-бота
         global _parent_bot
         if _parent_bot is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await _parent_bot.session.close()
-            except Exception:
-                pass
 
     try:
         loop.run_until_complete(_run())
     finally:
-        try:
+        with contextlib.suppress(Exception):
             loop.run_until_complete(loop.shutdown_asyncgens())
-        except Exception:
-            pass
         loop.close()
 
 

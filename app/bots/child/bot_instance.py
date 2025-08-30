@@ -12,7 +12,7 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command
 
 from sqlalchemy import func
@@ -256,17 +256,42 @@ def parse_channel_field(raw: str) -> tuple[Optional[str], Optional[str]]:
 
 
 # --- replace ---
+
 async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
+    """
+    Строгая проверка:
+    - если идентификатор канала не распознан — не проверяем (True);
+    - если Telegram говорит, что нельзя прочитать участника (forbidden/badrequest) — считаем, что НЕ подписан (False);
+    - другие сбои сети/таймауты — тоже False (чтобы не скипать экран подписки).
+    """
     ident, _ = parse_channel_field(channel_url or "")
     if not ident:
+        # админ не задал идентификатор — не блокируем
         return True
+
     try:
         m = await bot.get_chat_member(ident, user_id)
-        return getattr(m, "status", None) in ("member", "administrator", "creator", "restricted")
+        status = getattr(m, "status", None)
+        return status in ("member", "administrator", "creator", "restricted")
+
+    except TelegramForbiddenError:
+        # бот не в чате / нет прав — считаем, что не подписан
+        return False
+
+    except TelegramBadRequest as e:
+        msg = str(e).lower()
+        # типичные кейсы: chat not found, user not found, rights, channel private
+        bad_signs = ("chat not found", "user not found", "not enough rights", "channel private",
+                     "need administrator rights", "have no rights")
+        if any(s in msg for s in bad_signs):
+            return False
+        # прочие BadRequest — тоже не пропускаем
+        return False
+
     except Exception as e:
-        print(f"[subscribe-check] error: {e}")
-        # не блокируем из-за временных ошибок
-        return True
+        # сетевые/прочие ошибки — не пропускаем
+        print(f"[subscribe-check] unexpected: {e!r}")
+        return False
 
 
 

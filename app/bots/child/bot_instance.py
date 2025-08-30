@@ -222,15 +222,8 @@ def _find_stock_file(key: str, locale: str) -> Path | None:
 
 
 # ---------------------- ПОДПИСКА ----------------------
+# --- replace ---
 def parse_channel_field(raw: str) -> tuple[Optional[str], Optional[str]]:
-    """
-    Возвращает (ident_for_check, open_url_for_button).
-    Примеры:
-      "@mychan" -> ("@mychan", "https://t.me/mychan")
-      "-100123..." -> ("-100123...", None)  # кнопку потом сами решим
-      " -100123... | https://t.me/+invite " -> ("-100123...", "https://t.me/+invite")
-      "https://t.me/+invite" -> (None, "https://t.me/+invite")
-    """
     if not raw:
         return None, None
     raw = raw.strip()
@@ -239,7 +232,6 @@ def parse_channel_field(raw: str) -> tuple[Optional[str], Optional[str]]:
     else:
         left, right = raw, None
 
-    # ident для проверки
     ident = None
     if left.startswith("@") or left.startswith("-100"):
         ident = left
@@ -249,7 +241,6 @@ def parse_channel_field(raw: str) -> tuple[Optional[str], Optional[str]]:
         if name and not (name.startswith("+") or name.lower().startswith("joinchat")):
             ident = f"@{name}"
 
-    # url для кнопки
     url = None
     val = right or left
     if val.startswith("@"):
@@ -263,16 +254,20 @@ def parse_channel_field(raw: str) -> tuple[Optional[str], Optional[str]]:
 
 
 
+
+# --- replace ---
 async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
     ident, _ = parse_channel_field(channel_url or "")
     if not ident:
-        return True  # нет идентификатора — не блокируем
+        return True
     try:
         m = await bot.get_chat_member(ident, user_id)
         return getattr(m, "status", None) in ("member", "administrator", "creator", "restricted")
     except Exception as e:
         print(f"[subscribe-check] error: {e}")
-        return False  # делаем строгим
+        # не блокируем из-за временных ошибок
+        return True
+
 
 
 
@@ -429,17 +424,20 @@ def kb_lang(current: Optional[str], btn_main_text: str):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def kb_subscribe(locale: str, channel_url: str, btn_go_channel: str, btn_ive_subscribed: str, btn_main_text: str) -> InlineKeyboardMarkup:
-    ident, url = parse_channel_field(channel_url or "")
-    if not url:
-        url = "https://t.me"  # fallback, если ничего нет
+# --- replace ---
+def kb_subscribe(locale: str, channel_url: str,
+                 btn_go_channel: str, btn_ive_subscribed: str, btn_main_text: str) -> InlineKeyboardMarkup:
+    _, open_url = parse_channel_field(channel_url or "")
+    if not open_url:
+        open_url = "https://t.me"  # безопасный дефолт
 
     rows = [
-        [InlineKeyboardButton(text=btn_go_channel, url=url)],
+        [InlineKeyboardButton(text=btn_go_channel, url=open_url)],
         [InlineKeyboardButton(text=btn_ive_subscribed, callback_data="menu:subcheck")],
         [InlineKeyboardButton(text=btn_main_text, callback_data="menu:main")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 
 
@@ -1673,18 +1671,17 @@ async def run_child_bot(tenant: Tenant):
 
     @r.message(AdminForm.waiting_channel)
     async def on_channel_input(msg: Message, state: FSMContext):
-        if msg.from_user.id != tenant.owner_tg_id:
-            return
-        url = (msg.text or "").strip()
+        if not owner_only(msg.from_user.id): return
+        raw = (msg.text or "").strip()
         db = SessionLocal()
         try:
             t = db.query(Tenant).filter(Tenant.id == tenant.id).first()
-            t.channel_url = url
+            t.channel_url = raw  # храним как ввели: "@name" | "-100…" | "t.me/+invite" | "-100… | https://t.me/+invite"
             db.commit()
         finally:
             db.close()
         await state.clear()
-        await msg.answer("✅ Ссылка канала/чата сохранена. Добавьте бота в чат (в канале — админ).",
+        await msg.answer("✅ Ссылка/ID канала сохранены. Добавьте бота в канал (в канале — админ).",
                          reply_markup=kb_admin_main())
 
     # ---- Admin: Content inputs

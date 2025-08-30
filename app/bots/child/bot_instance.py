@@ -222,33 +222,59 @@ def _find_stock_file(key: str, locale: str) -> Path | None:
 
 
 # ---------------------- ПОДПИСКА ----------------------
-def _as_chat_ident(channel_url: str) -> Optional[str]:
-    if not channel_url:
-        return None
-    u = channel_url.strip()
-    if not u:
-        return None
-    if u.startswith("@") or u.startswith("-100"):
-        return u
-    if "t.me/" in u:
-        tail = u.split("t.me/", 1)[1]
+def parse_channel_field(raw: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Возвращает (ident_for_check, open_url_for_button).
+    Примеры:
+      "@mychan" -> ("@mychan", "https://t.me/mychan")
+      "-100123..." -> ("-100123...", None)  # кнопку потом сами решим
+      " -100123... | https://t.me/+invite " -> ("-100123...", "https://t.me/+invite")
+      "https://t.me/+invite" -> (None, "https://t.me/+invite")
+    """
+    if not raw:
+        return None, None
+    raw = raw.strip()
+    if "|" in raw:
+        left, right = [x.strip() for x in raw.split("|", 1)]
+    else:
+        left, right = raw, None
+
+    # ident для проверки
+    ident = None
+    if left.startswith("@") or left.startswith("-100"):
+        ident = left
+    elif "t.me/" in left:
+        tail = left.split("t.me/", 1)[1]
         name = tail.split("/", 1)[0].lstrip("@")
         if name and not (name.startswith("+") or name.lower().startswith("joinchat")):
-            return f"@{name}"
-    return None
+            ident = f"@{name}"
+
+    # url для кнопки
+    url = None
+    val = right or left
+    if val.startswith("@"):
+        url = f"https://t.me/{val[1:]}"
+    elif val.startswith("http://") or val.startswith("https://"):
+        url = val
+    elif "t.me/" in val:
+        url = "https://" + val.lstrip("/")
+
+    return ident, url
+
 
 
 async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
-    ident = _as_chat_ident(channel_url or "")
+    ident, _ = parse_channel_field(channel_url or "")
     if not ident:
-        return True
+        return True  # нет идентификатора — не блокируем
     try:
-        member = await bot.get_chat_member(ident, user_id)
-        status = getattr(member, "status", None)
-        return status in ("member", "administrator", "creator", "restricted")
+        m = await bot.get_chat_member(ident, user_id)
+        return getattr(m, "status", None) in ("member", "administrator", "creator", "restricted")
     except Exception as e:
         print(f"[subscribe-check] error: {e}")
-        return True
+        return False  # делаем строгим
+
+
 
 
 # ---------------------- УТИЛЫ ДЛЯ СВЕЖИХ ДАННЫХ ----------------------
@@ -404,17 +430,9 @@ def kb_lang(current: Optional[str], btn_main_text: str):
 
 
 def kb_subscribe(locale: str, channel_url: str, btn_go_channel: str, btn_ive_subscribed: str, btn_main_text: str) -> InlineKeyboardMarkup:
-    url_raw = (channel_url or "").strip()
-    if url_raw.startswith("@"):
-        url = f"https://t.me/{url_raw[1:]}"
-    elif url_raw.startswith("-100"):
-        url = "https://t.me"
-    elif url_raw.startswith("http://") or url_raw.startswith("https://"):
-        url = url_raw
-    elif url_raw.startswith("t.me/") or "t.me/" in url_raw:
-        url = "https://" + url_raw.lstrip("/")
-    else:
-        url = "https://t.me"
+    ident, url = parse_channel_field(channel_url or "")
+    if not url:
+        url = "https://t.me"  # fallback, если ничего нет
 
     rows = [
         [InlineKeyboardButton(text=btn_go_channel, url=url)],
@@ -422,6 +440,7 @@ def kb_subscribe(locale: str, channel_url: str, btn_go_channel: str, btn_ive_sub
         [InlineKeyboardButton(text=btn_main_text, callback_data="menu:main")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 
 # --------------------------- РЕНДЕР ЭКРАНОВ: UI ---------------------------
@@ -1075,9 +1094,13 @@ async def run_child_bot(tenant: Tenant):
         if data == "adm:set:channel":
             await state.set_state(AdminForm.waiting_channel)
             await cb.message.edit_text(
-                "Пришлите ссылку на канал/группу (@username или -100..., или https://t.me/username).\n\n"
-                "⚠️ Бот должен быть участником (в канале — админ)."
+                "Если у вас <b>публичный канал</b> — отправьте <code>@username</code> или ссылку на канал/группу "
+                "(например: https://t.me/username).\n\n"
+                "Если у вас <b>приватный канал</b> — отправьте ID канала и инвайт-ссылку в формате:\n"
+                "<code>-1001234567890 | https://t.me/+invite</code>\n\n"
+                "⚠️ Бот должен быть участником (в канале — админом)."
             )
+
             await cb.answer(); return
 
         # ----- PARAMS toggles

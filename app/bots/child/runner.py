@@ -1,4 +1,5 @@
 import asyncio
+import os, contextlib
 import signal
 import contextlib
 from typing import Dict, Optional, Tuple, Any
@@ -13,7 +14,10 @@ from app.settings import settings
 
 
 # Как часто пересканировать базу
-CHECK_INTERVAL_SEC = 10
+CHECK_INTERVAL_SEC = 2
+
+BUMPER_PATH = "/tmp/pb_runner.bump"
+_last_bump_mtime = 0.0
 
 # Родительский бот – используется для проверки членства владельца
 _parent_bot: Optional[Bot] = None
@@ -163,14 +167,21 @@ async def _child_entry(tenant_id: int):
             return
         except Exception as e:
             print(f"[runner] child crashed: tenant_id={tenant_id} exc={e!r}; restart in 5s")
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
 
 
 async def manager_loop():
-    global _DB_DEBUG_DONE
+    """
+    Главный цикл раннера детей.
+    - Следит за active-тенантами и держит по ним задачи.
+    - Реагирует на bump-файл (/tmp/pb_runner.bump): мгновенный софт-ребут всех детей.
+    - Быстрее подхватывает изменения (CHECK_INTERVAL_SEC).
+    """
+    global _DB_DEBUG_DONE, _last_bump_mtime
 
     # tasks[tenant_id] = (asyncio.Task, signature)
-    tasks: Dict[int, Tuple[asyncio.Task, Tuple[Any, ...]]] = {}
+    # signature = (token, username) — чтобы понимать, что конфиг изменился и ребёнка надо перезапустить
+    tasks: Dict[int, Tuple[asyncio.Task, Tuple[str, str]]] = {}
 
     async def stop_task(tid: int):
         rec = tasks.pop(tid, None)
@@ -182,6 +193,106 @@ async def manager_loop():
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         print(f"[runner] stopped child tenant_id={tid}")
+
+    async def ensure_db_debug_once():
+        global _DB_DEBUG_DONE
+        if _DB_DEBUG_DONE:
+            return
+        try:
+            print("[runner][DB] engine.url:", engine.url)
+            with engine.connect() as conn:
+                dblist = conn.exec_driver_sql("PRAGMA database_list;").all()
+                print("[runner][DB] PRAGMA database_list:", dblist)
+                cols = conn.exec_driver_sql("PRAGMA table_info(tenants);").all()
+                print("[runner][DB] tenants columns:", [c[1] for c in cols])
+                try:
+                    _ = conn.exec_driver_sql("SELECT channel_url FROM tenants LIMIT 1;").all()
+                    print("[runner][DB] raw SELECT channel_url: OK")
+                except Exception as e:
+                    print("[runner][DB] raw SELECT channel_url: FAIL ->", repr(e))
+        except Exception as e:
+            print("[runner][DB] introspection error:", repr(e))
+        finally:
+            _DB_DEBUG_DONE = True
+
+    while True:
+        await ensure_db_debug_once()
+
+        # --- bump-файл: мягкий массовый ребут детей по сигналу из /ga
+        try:
+            mtime = os.path.getmtime(BUMPER_PATH) if os.path.exists(BUMPER_PATH) else 0.0
+            if mtime and mtime > _last_bump_mtime:
+                _last_bump_mtime = mtime
+                print("[runner] bump detected -> restarting all children")
+                # стопаем всех сейчас запущенных
+                for tid in list(tasks.keys()):
+                    await stop_task(tid)
+                tasks.clear()
+        except Exception:
+            pass
+
+        db = SessionLocal()
+        try:
+            # 1) Автопауза активных, если включена проверка членства владельца
+            if _need_owner_membership_check():
+                active_for_check = db.query(Tenant).filter(Tenant.status == TenantStatus.active).all()
+                changed = False
+                for t in active_for_check:
+                    try:
+                        ok = await _owner_is_member(t.owner_tg_id)
+                    except Exception:
+                        ok = False
+                    if not ok and t.status == TenantStatus.active:
+                        t.status = TenantStatus.paused
+                        changed = True
+                if changed:
+                    db.commit()
+
+            # 2) Текущий снимок активных тенантов
+            active = db.query(Tenant).filter(Tenant.status == TenantStatus.active).all()
+            active_map: Dict[int, Tenant] = {t.id: t for t in active}
+            active_ids = set(active_map.keys())
+
+            # 3) Остановить тех, кто больше не активен
+            for tid in list(tasks.keys()):
+                if tid not in active_ids:
+                    await stop_task(tid)
+
+            # 4) Старт/рестарт активных:
+            #    - нет задачи → стартуем
+            #    - изменился token/username → перезапускаем
+            for t in active:
+                token = (t.child_bot_token or "").strip()
+                username = (t.child_bot_username or "").strip()
+                signature = (token, username)
+
+                current = tasks.get(t.id)
+                if current is None:
+                    # предполётная проверка токена (401 → автопауза)
+                    ok = await _preflight_token(t)
+                    if not ok:
+                        _pause_tenant(t.id, reason="unauthorized_preflight")
+                        continue
+                    task = asyncio.create_task(_child_entry(t))
+                    tasks[t.id] = (task, signature)
+                    continue
+
+                task, old_signature = current
+                if signature != old_signature:
+                    # конфиг изменился — перезапускаем ребёнка
+                    await stop_task(t.id)
+                    ok = await _preflight_token(t)
+                    if not ok:
+                        _pause_tenant(t.id, reason="unauthorized_preflight_change")
+                        continue
+                    task = asyncio.create_task(_child_entry(t))
+                    tasks[t.id] = (task, signature)
+
+        finally:
+            db.close()
+
+        await asyncio.sleep(CHECK_INTERVAL_SEC)
+
 
     async def ensure_db_debug_once():
         global _DB_DEBUG_DONE

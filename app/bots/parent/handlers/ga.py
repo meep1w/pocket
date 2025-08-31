@@ -5,6 +5,8 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton
 )
 from sqlalchemy import and_
+import os
+import time
 
 from app.settings import settings
 from app.db import SessionLocal
@@ -16,6 +18,8 @@ from app.models import (
 
 router = Router()
 
+# где runner следит за bump-файлом
+BUMPER_PATH = "/tmp/pb_runner.bump"
 
 # --------------------- helpers ---------------------
 def _is_ga(uid: int) -> bool:
@@ -42,7 +46,8 @@ def _t_line(db, t: Tenant) -> str:
     dep = db.query(User).filter(
         and_(User.tenant_id == t.id, User.step == UserStep.deposited)
     ).count()
-    return f"#{t.id} @{t.child_bot_username or 'no_username'} — <b>{t.status}</b> | 👥 {total} / 📝 {reg} / 💰 {dep}"
+    uname = f"@{t.child_bot_username}" if t.child_bot_username else f"bot#{t.id}"
+    return f"#{t.id} {uname} — <b>{t.status}</b> | 👥 {total} / 📝 {reg} / 💰 {dep}"
 
 
 def _tenant_button_title(db, t: Tenant) -> str:
@@ -52,6 +57,17 @@ def _tenant_button_title(db, t: Tenant) -> str:
     dep = db.query(User).filter(and_(User.tenant_id == t.id, User.step == UserStep.deposited)).count()
     name = f"@{t.child_bot_username}" if t.child_bot_username else f"Bot #{t.id}"
     return f"{name}  |  👥{total} 📝{reg} 💰{dep}"
+
+
+def _bump_runner():
+    # создаём/обновляем файл, runner увидит mtime и перезапустит детей
+    try:
+        with open(BUMPER_PATH, "a", encoding="utf-8"):
+            pass
+        os.utime(BUMPER_PATH, (time.time(), time.time()))
+        return True
+    except Exception:
+        return False
 
 
 # --------------------- /ga (главное) ---------------------
@@ -91,6 +107,7 @@ async def ga_menu(msg: Message):
         if len(tenants) > per:
             rows.append([InlineKeyboardButton(text="📋 Все боты", callback_data="ga:list:1")])
 
+        rows.append([InlineKeyboardButton(text="🔄 Перезапустить детей", callback_data="ga:bump")])
         rows.append([InlineKeyboardButton(text="🧨 Пурж удалённых", callback_data="ga:purge_deleted")])
 
         kb = InlineKeyboardMarkup(inline_keyboard=rows)
@@ -151,6 +168,16 @@ async def ga_home(cb: CallbackQuery):
     await cb.answer()
 
 
+# --------------------- bump (перезапуск детей) ---------------------
+@router.callback_query(F.data == "ga:bump")
+async def ga_bump(cb: CallbackQuery):
+    if not _is_ga(cb.from_user.id):
+        await cb.answer(); return
+    ok = _bump_runner()
+    await cb.answer("Ok" if ok else "Ошибка")
+    await ga_home(cb)
+
+
 # --------------------- карточка бота ---------------------
 @router.callback_query(F.data.startswith("ga:go:"))
 async def ga_go(cb: CallbackQuery):
@@ -182,6 +209,7 @@ async def ga_go(cb: CallbackQuery):
             [InlineKeyboardButton(text="🔁 Постбэки", callback_data=f"ga:pb:{t.id}")],
             [InlineKeyboardButton(text="🧹 Очистка БД (жёстко)", callback_data=f"ga:clean:pick:{t.id}")],
             [InlineKeyboardButton(text="🗑 Удалить бота", callback_data=f"ga:del:{t.id}")],
+            [InlineKeyboardButton(text="🔄 Перезапустить детей", callback_data="ga:bump")],
             [InlineKeyboardButton(text="⬅️ К списку", callback_data="ga:list:1")],
             [InlineKeyboardButton(text="🏠 Домой", callback_data="ga:home")],
         ]

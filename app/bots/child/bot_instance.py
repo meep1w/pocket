@@ -290,34 +290,62 @@ def parse_channel_field(raw: str) -> tuple[Optional[Union[int, str]], Optional[s
 
 async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
     """
-    Строгая, но «не ломкая» проверка:
-    - если идентификатор не распознан — не блокируем (True);
-    - если Telegram говорит forbidden/badrequest — считаем НЕ подписан (False);
-    - прочие исключения — False.
+    Строгая, но более устойчивая проверка:
+    - приватный канал поддержан через ID вида -100... (кастим к int);
+    - если username: пробуем '@name' и без '@' (на всякий случай);
+    - Forbidden/BadRequest → False (не пускаем дальше), но логируем причину.
     """
     ident, _ = parse_channel_field(channel_url or "")
     if not ident:
+        # админ не задал идентификатор — не блокируем
         return True
 
-    chat_id: Union[int, str] = ident
+    # подготавливаем chat_id:
+    chat_id = ident
+    try:
+        if ident.startswith("-100") and ident[1:].isdigit():
+            chat_id = int(ident)  # для приватных чатов/каналов надёжнее int
+    except Exception:
+        pass
+
+    # пробуем основную попытку
     try:
         m = await bot.get_chat_member(chat_id, user_id)
         status = getattr(m, "status", None)
         return status in ("member", "administrator", "creator", "restricted")
-    except TelegramForbiddenError:
-        return False
+
     except TelegramBadRequest as e:
         msg = str(e).lower()
+        # если username: попробуем без '@' (редкий, но встречается баг)
+        if isinstance(chat_id, str) and chat_id.startswith("@"):
+            try:
+                m = await bot.get_chat_member(chat_id[1:], user_id)
+                status = getattr(m, "status", None)
+                return status in ("member", "administrator", "creator", "restricted")
+            except Exception:
+                pass
+
+        # типичные кейсы → считаем, что НЕ подписан
         bad_signs = (
             "chat not found", "user not found", "not enough rights", "channel private",
             "need administrator rights", "have no rights"
         )
         if any(s in msg for s in bad_signs):
+            print(f"[subscribe-check][badrequest] ident={ident} uid={user_id} err={e}")
             return False
+        print(f"[subscribe-check][badrequest-other] ident={ident} uid={user_id} err={e}")
         return False
+
+    except TelegramForbiddenError as e:
+        # бот не в чате / нет прав — считаем, что не подписан
+        print(f"[subscribe-check][forbidden] ident={ident} uid={user_id} err={e}")
+        return False
+
     except Exception as e:
-        print(f"[subscribe-check] unexpected: {e!r}")
+        # сетевые/прочие ошибки — не пропускаем
+        print(f"[subscribe-check][unexpected] ident={ident} uid={user_id} err={e!r}")
         return False
+
 
 
 # ---------------------- УТИЛЫ ДЛЯ СВЕЖИХ ДАННЫХ ----------------------

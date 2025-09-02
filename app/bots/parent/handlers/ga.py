@@ -4,9 +4,12 @@ from aiogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton
 )
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 from sqlalchemy import and_
 import os
 import time
+import json
 
 from app.settings import settings
 from app.db import SessionLocal
@@ -20,41 +23,36 @@ router = Router()
 
 # где runner следит за bump-файлом
 BUMPER_PATH = "/tmp/pb_runner.bump"
+STATUS_DIR = "/tmp/children_status"
+
+PAGE_SIZE = 5  # по 5 ботов на страницу
+
 
 # --------------------- helpers ---------------------
 def _is_ga(uid: int) -> bool:
     return uid in settings.ga_admin_ids
 
 
-def _safe_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup | None = None):
-    async def _do():
+async def _safe_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup | None = None):
+    try:
+        await cb.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True)
+    except Exception:
         try:
-            await cb.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True)
+            # если текст менять нельзя (например, старый), попробуем хотя бы клавиатуру
+            await cb.message.edit_reply_markup(reply_markup=kb)
         except Exception:
-            try:
-                await cb.message.edit_reply_markup(reply_markup=kb)
-            except Exception:
-                pass
-    return _do()
+            pass
 
 
-def _t_line(db, t: Tenant) -> str:
-    total = db.query(User).filter(User.tenant_id == t.id).count()
-    reg = db.query(User).filter(
-        and_(User.tenant_id == t.id, User.step >= UserStep.registered)
-    ).count()
-    dep = db.query(User).filter(
-        and_(User.tenant_id == t.id, User.step == UserStep.deposited)
-    ).count()
-    uname = f"@{t.child_bot_username}" if t.child_bot_username else f"bot#{t.id}"
-    return f"#{t.id} {uname} — <b>{t.status}</b> | 👥 {total} / 📝 {reg} / 💰 {dep}"
+def _t_counts(db, tenant_id: int) -> tuple[int, int, int]:
+    total = db.query(User).filter(User.tenant_id == tenant_id).count()
+    reg = db.query(User).filter(and_(User.tenant_id == tenant_id, User.step >= UserStep.registered)).count()
+    dep = db.query(User).filter(and_(User.tenant_id == tenant_id, User.step == UserStep.deposited)).count()
+    return total, reg, dep
 
 
 def _tenant_button_title(db, t: Tenant) -> str:
-    # компактная подпись на кнопке: имя и мини-цифры
-    total = db.query(User).filter(User.tenant_id == t.id).count()
-    reg = db.query(User).filter(and_(User.tenant_id == t.id, User.step >= UserStep.registered)).count()
-    dep = db.query(User).filter(and_(User.tenant_id == t.id, User.step == UserStep.deposited)).count()
+    total, reg, dep = _t_counts(db, t.id)
     name = f"@{t.child_bot_username}" if t.child_bot_username else f"Bot #{t.id}"
     return f"{name}  |  👥{total} 📝{reg} 💰{dep}"
 
@@ -70,12 +68,75 @@ def _bump_runner():
         return False
 
 
-# --------------------- /ga (главное) ---------------------
-@router.message(Command("ga"))
-async def ga_menu(msg: Message):
-    if not _is_ga(msg.from_user.id):
-        return
+def _read_child_status(tenant_id: int) -> dict:
+    """
+    Читаем /tmp/children_status/{tenant_id}.json, если есть.
+    Возвращаем {"phase": "...", "detail": "...", "ts": 0.0} или пустые поля.
+    """
+    path = os.path.join(STATUS_DIR, f"{tenant_id}.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {
+            "phase": data.get("phase", ""),
+            "detail": data.get("detail", ""),
+            "ts": float(data.get("ts", 0.0)),
+        }
+    except Exception:
+        return {"phase": "", "detail": "", "ts": 0.0}
 
+
+def _fmt_ts(ts: float) -> str:
+    if not ts:
+        return "—"
+    try:
+        lt = time.localtime(ts)
+        return time.strftime("%Y-%m-%d %H:%M:%S", lt)
+    except Exception:
+        return str(ts)
+
+
+def _channel_display(raw: str | None) -> tuple[str, str]:
+    """
+    Возвращаем (ident, open_url) для показа канала.
+    raw может быть:
+      "@name" | "-100..." | "https://t.me/username" | "-100... | https://t.me/+invite"
+    """
+    if not raw:
+        return "—", "—"
+    raw = raw.strip()
+    ident = raw
+    open_url = raw
+
+    # Если формат "-100... | url"
+    if " | " in raw:
+        left, right = raw.split(" | ", 1)
+        ident = left.strip()
+        open_url = right.strip()
+    else:
+        # если "@name" → сделаем ссылку
+        if raw.startswith("@"):
+            ident = raw
+            open_url = f"https://t.me/{raw[1:]}"
+        # если "t.me/..." → ссылка есть
+        elif "t.me/" in raw:
+            ident = raw
+            open_url = raw if raw.startswith("http") else "https://" + raw.lstrip("/")
+
+    return ident, open_url
+
+
+async def _owner_username(bot, owner_id: int) -> str:
+    try:
+        ch = await bot.get_chat(owner_id)
+        if getattr(ch, "username", None):
+            return f"@{ch.username}"
+    except Exception:
+        pass
+    return "—"
+
+
+async def _render_ga_home_text_kb() -> tuple[str, InlineKeyboardMarkup]:
     db = SessionLocal()
     try:
         tenants = db.query(Tenant).filter(Tenant.status != TenantStatus.deleted).order_by(Tenant.id.desc()).all()
@@ -91,44 +152,61 @@ async def ga_menu(msg: Message):
 
         text = (
             "<b>GA панель</b>\n\n"
-            f"Клиенты: {tenants_total} (активных: {tenants_active}, на паузе: {tenants_paused})\n"
-            f"Пользователи: {users_total} (📝 {users_reg}, 💰 {users_dep})\n\n"
-            "Выбери бота:"
+            f"Клиентов: <b>{tenants_total}</b>\n"
+            f"Активных: <b>{tenants_active}</b> | На паузе: <b>{tenants_paused}</b>\n"
+            f"Пользователи: <b>{users_total}</b> (📝 {users_reg}, 💰 {users_dep})\n\n"
+            "Выберите бота:"
         )
 
-        # Кнопки по ботам (пагинация простая: по 8 в столбик)
         rows = []
-        per = 8
-        for t in tenants[:per]:
-            rows.append([
-                InlineKeyboardButton(text=_tenant_button_title(db, t), callback_data=f"ga:go:{t.id}")
-            ])
+        for t in tenants[:PAGE_SIZE]:
+            rows.append([InlineKeyboardButton(text=_tenant_button_title(db, t), callback_data=f"ga:go:{t.id}")])
 
-        if len(tenants) > per:
-            rows.append([InlineKeyboardButton(text="📋 Все боты", callback_data="ga:list:1")])
+        if len(tenants) > PAGE_SIZE:
+            rows.append([InlineKeyboardButton(text="📋 Список (стр. 1)", callback_data="ga:list:1")])
 
         rows.append([InlineKeyboardButton(text="🔄 Перезапустить детей", callback_data="ga:bump")])
         rows.append([InlineKeyboardButton(text="🧨 Пурж удалённых", callback_data="ga:purge_deleted")])
 
         kb = InlineKeyboardMarkup(inline_keyboard=rows)
-        await msg.answer(text, reply_markup=kb)
+        return text, kb
     finally:
         db.close()
 
 
-# --------------------- список (пагинация) ---------------------
+# --------------------- FSM для быстрых правок ссылок ---------------------
+class GAForm(StatesGroup):
+    wait_support = State()
+    wait_ref = State()
+    wait_dep = State()
+    wait_miniapp = State()
+    wait_channel = State()
+
+
+# --------------------- /ga (главное) ---------------------
+@router.message(Command("ga"))
+async def ga_menu(msg: Message):
+    if not _is_ga(msg.from_user.id):
+        return
+    text, kb = await _render_ga_home_text_kb()
+    await msg.answer(text, reply_markup=kb)
+
+
+# --------------------- список (пагинация по 5) ---------------------
 @router.callback_query(F.data.startswith("ga:list:"))
 async def ga_list(cb: CallbackQuery):
     if not _is_ga(cb.from_user.id):
         await cb.answer(); return
-    page = int(cb.data.split(":")[2])
-    per = 10
+    try:
+        page = int(cb.data.split(":")[2])
+    except Exception:
+        page = 1
 
     db = SessionLocal()
     try:
         q = db.query(Tenant).filter(Tenant.status != TenantStatus.deleted)
         total = q.count()
-        tenants = q.order_by(Tenant.id.desc()).offset((page-1)*per).limit(per).all()
+        tenants = q.order_by(Tenant.id.desc()).offset((page-1)*PAGE_SIZE).limit(PAGE_SIZE).all()
         if not tenants:
             await _safe_edit(cb, "Клиентов пока нет.")
             await cb.answer(); return
@@ -140,10 +218,12 @@ async def ga_list(cb: CallbackQuery):
         nav = []
         if page > 1:
             nav.append(InlineKeyboardButton(text="« Назад", callback_data=f"ga:list:{page-1}"))
-        if page*per < total:
+        if page * PAGE_SIZE < total:
             nav.append(InlineKeyboardButton(text="Вперёд »", callback_data=f"ga:list:{page+1}"))
         if nav:
             rows.append(nav)
+
+        rows.append([InlineKeyboardButton(text="🔄 Перезапустить детей", callback_data="ga:bump")])
         rows.append([InlineKeyboardButton(text="🏠 Домой", callback_data="ga:home")])
 
         await _safe_edit(cb, "<b>Список ботов</b>", InlineKeyboardMarkup(inline_keyboard=rows))
@@ -156,15 +236,8 @@ async def ga_list(cb: CallbackQuery):
 async def ga_home(cb: CallbackQuery):
     if not _is_ga(cb.from_user.id):
         await cb.answer(); return
-    # просто перегенерим /ga
-    fake = Message(
-        message_id=cb.message.message_id,
-        date=cb.message.date,
-        chat=cb.message.chat,
-        message_thread_id=None
-    )
-    fake.from_user = cb.from_user
-    await ga_menu(fake)  # пересоберём главную
+    text, kb = await _render_ga_home_text_kb()
+    await _safe_edit(cb, text, kb)
     await cb.answer()
 
 
@@ -191,28 +264,59 @@ async def ga_go(cb: CallbackQuery):
         if not t:
             await cb.answer("Не найден"); return
 
-        line = _t_line(db, t)
+        total, reg, dep = _t_counts(db, t.id)
+        uname = f"@{t.child_bot_username}" if t.child_bot_username else "—"
+        status = t.status
+
+        owner_name = await _owner_username(cb.bot, t.owner_tg_id)
+        ch_ident, ch_open = _channel_display(t.channel_url)
+
+        st = _read_child_status(t.id)
+        st_line = f"{st.get('phase') or '—'}"
+        if st.get("detail"):
+            st_line += f" | {st['detail']}"
+        if st.get("ts"):
+            st_line += f" | { _fmt_ts(st['ts']) }"
+
         txt = (
-            f"{line}\n"
-            f"Владелец: <code>{t.owner_tg_id}</code>\n"
+            f"<b>Клиент #{t.id}</b>\n"
+            f"Имя бота: {uname}\n"
+            f"Статус: <b>{status}</b>\n"
+            f"Статус ребёнка: <code>{st_line}</code>\n"
+            f"Пользователи: 👥 {total}\n"
+            f"Регистрации: 📝 {reg}\n"
+            f"Депозиты: 💰 {dep}\n"
+            f"Владелец: <code>{t.owner_tg_id}</code>, {owner_name}\n\n"
             f"Support: {t.support_url or '—'}\n"
             f"Ref: {t.ref_link or '—'}\n"
             f"Deposit: {t.deposit_link or '—'}\n"
             f"MiniApp: {t.miniapp_url or '—'}\n"
             f"Channel: {t.channel_url or '—'}"
         )
+
         rows = [
             [InlineKeyboardButton(
                 text=("⏸ Пауза" if t.status == TenantStatus.active else "▶️ Запуск"),
                 callback_data=f"ga:toggle:{t.id}"
             )],
             [InlineKeyboardButton(text="🔁 Постбэки", callback_data=f"ga:pb:{t.id}")],
+            [
+                InlineKeyboardButton(text="✏️ Support", callback_data=f"ga:set:support:{t.id}"),
+                InlineKeyboardButton(text="✏️ Ref", callback_data=f"ga:set:ref:{t.id}"),
+            ],
+            [
+                InlineKeyboardButton(text="✏️ Deposit", callback_data=f"ga:set:dep:{t.id}"),
+                InlineKeyboardButton(text="✏️ MiniApp", callback_data=f"ga:set:miniapp:{t.id}"),
+            ],
+            [InlineKeyboardButton(text="✏️ Channel", callback_data=f"ga:set:channel:{t.id}")],
             [InlineKeyboardButton(text="🧹 Очистка БД (жёстко)", callback_data=f"ga:clean:pick:{t.id}")],
             [InlineKeyboardButton(text="🗑 Удалить бота", callback_data=f"ga:del:{t.id}")],
-            [InlineKeyboardButton(text="🔄 Перезапустить детей", callback_data="ga:bump")],
-            [InlineKeyboardButton(text="⬅️ К списку", callback_data="ga:list:1")],
             [InlineKeyboardButton(text="🏠 Домой", callback_data="ga:home")],
         ]
+        # Можно сделать клик по каналу: отдельная кнопка «Открыть канал», если есть URL
+        if ch_open and ch_open != "—":
+            rows.insert(2, [InlineKeyboardButton(text="🔎 Открыть канал", url=ch_open)])
+
         await _safe_edit(cb, txt, InlineKeyboardMarkup(inline_keyboard=rows))
         await cb.answer()
     finally:
@@ -255,9 +359,9 @@ async def ga_pb(cb: CallbackQuery):
         dep = f"{base}/pb?tenant_id={t.id}&event=deposit&t={secret}&click_id={{click_id}}&trader_id={{trader_id}}&sum={{sumdep}}"
 
         txt = (
-            f"Постбэки для @{t.child_bot_username or t.id}\n\n"
-            f"Регистрация:\n<code>{reg}</code>\n"
-            f"Депозит:\n<code>{dep}</code>\n\n"
+            f"<b>Постбэки для</b> {t.child_bot_username or t.id}\n\n"
+            f"📝 Регистрация:\n<code>{reg}</code>\n\n"
+            f"💳 Депозит:\n<code>{dep}</code>\n\n"
             "PP макросы:\n"
             "Регистрация: click_id→click_id, trader_id→trader_id\n"
             "Депозит: click_id→click_id, trader_id→trader_id, sumdep→sum"
@@ -305,7 +409,7 @@ async def ga_delc(cb: CallbackQuery):
             t.status = TenantStatus.paused
             db.commit()
 
-        # ЧИСТИМ ВСЁ, чтобы не было «хвостов»
+        # ЧИСТИМ ВСЁ
         db.query(Postback).filter(Postback.tenant_id == t.id).delete(synchronize_session=False)
         db.query(User).filter(User.tenant_id == t.id).delete(synchronize_session=False)
         db.query(TenantText).filter(TenantText.tenant_id == t.id).delete(synchronize_session=False)
@@ -316,14 +420,13 @@ async def ga_delc(cb: CallbackQuery):
         db.delete(t)
         db.commit()
 
-        # После этого владелец сможет подключить новый бот — никаких ЧС/блокировок нет.
         await _safe_edit(cb, f"✅ Клиент #{tid} полностью удалён.", None)
         await cb.answer("Удалено")
         return
 
     except Exception as e:
         db.rollback()
-        # Фолбэк: пометим как deleted (на всякий случай)
+        # Фолбэк: пометим как deleted
         try:
             t = db.query(Tenant).filter(Tenant.id == tid).first()
             if t:
@@ -352,8 +455,10 @@ async def ga_clean_router(cb: CallbackQuery):
             t = db.query(Tenant).filter(Tenant.id == tid).first()
             if not t:
                 await cb.answer("Не найден"); return
+            total, reg, dep = _t_counts(db, t.id)
             txt = (
-                f"{_t_line(db, t)}\n\n"
+                f"<b>Очистка клиента #{tid}</b>\n"
+                f"Пользователи: 👥 {total} | 📝 {reg} | 💰 {dep}\n\n"
                 "ЖЁСТКАЯ очистка:\n— удалит пользователей и постбэки\n— удалит контент и конфиги\n"
                 "— обнулит support/ref/deposit/miniapp/channel в карточке клиента\n"
                 "Клиент останется (как «с нуля»)."
@@ -470,3 +575,146 @@ async def ga_purge_deleted_run(cb: CallbackQuery):
 
     await _safe_edit(cb, f"🧨 Пурж завершён.\nУдалено: <b>{purged}</b>\nОшибок: <b>{failed}</b>{details}")
     await cb.answer("Готово")
+
+
+# --------------------- Быстрые правки ссылок (FSM) ---------------------
+@router.callback_query(F.data.startswith("ga:set:"))
+async def ga_set_router(cb: CallbackQuery, state: FSMContext):
+    if not _is_ga(cb.from_user.id):
+        await cb.answer(); return
+
+    parts = cb.data.split(":")
+    # ga:set:{field}:{tenant_id}
+    if len(parts) != 4:
+        await cb.answer(); return
+
+    field = parts[2]
+    tid = int(parts[3])
+
+    await state.update_data(ga_tid=tid)
+
+    prompts = {
+        "support": "Пришлите <b>новый Support URL</b> одним сообщением.\n\n⬅️ /ga — отмена.",
+        "ref": "Пришлите <b>новую реферальную ссылку</b> одним сообщением.\n\n⬅️ /ga — отмена.",
+        "dep": "Пришлите <b>ссылку для депозита</b> одним сообщением.\n\n⬅️ /ga — отмена.",
+        "miniapp": "Пришлите <b>Web-app URL</b> одним сообщением.\n\n⬅️ /ga — отмена.",
+        "channel": (
+            "Если <b>публичный канал</b> — отправьте <code>@username</code> или ссылку на канал/группу "
+            "(например: https://t.me/username).\n\n"
+            "Если <b>приватный канал</b> — отправьте ID и инвайт-ссылку в формате:\n"
+            "<code>-1001234567890 | https://t.me/+invite</code>\n\n"
+            "⚠️ Важно: бот должен быть участником (в канале — админом)."
+        ),
+    }
+
+    form_map = {
+        "support": GAForm.wait_support,
+        "ref": GAForm.wait_ref,
+        "dep": GAForm.wait_dep,
+        "miniapp": GAForm.wait_miniapp,
+        "channel": GAForm.wait_channel,
+    }
+    if field not in form_map:
+        await cb.answer(); return
+
+    await state.set_state(form_map[field])
+    await _safe_edit(cb, prompts[field])
+    await cb.answer()
+
+
+async def _apply_field(tid: int, field: str, value: str) -> bool:
+    db = SessionLocal()
+    try:
+        t = db.query(Tenant).filter(Tenant.id == tid).first()
+        if not t:
+            return False
+        if field == "support":
+            t.support_url = value
+        elif field == "ref":
+            t.ref_link = value
+        elif field == "dep":
+            t.deposit_link = value
+        elif field == "miniapp":
+            t.miniapp_url = value
+        elif field == "channel":
+            t.channel_url = value
+        else:
+            return False
+        db.commit()
+        return True
+    except Exception:
+        db.rollback()
+        return False
+    finally:
+        db.close()
+
+
+@router.message(GAForm.wait_support)
+async def ga_set_support(msg: Message, state: FSMContext):
+    if not _is_ga(msg.from_user.id):
+        return
+    data = await state.get_data()
+    tid = data.get("ga_tid")
+    ok = await _apply_field(tid, "support", (msg.text or "").strip())
+    await state.clear()
+    await msg.answer("✅ Support URL обновлён." if ok else "❌ Не удалось обновить Support URL.")
+    # показать карточку
+    fake_cb = CallbackQuery(id="0", from_user=msg.from_user, chat_instance="", message=msg)
+    fake_cb.data = f"ga:go:{tid}"
+    await ga_go(fake_cb)  # type: ignore[arg-type]
+
+
+@router.message(GAForm.wait_ref)
+async def ga_set_ref(msg: Message, state: FSMContext):
+    if not _is_ga(msg.from_user.id):
+        return
+    data = await state.get_data()
+    tid = data.get("ga_tid")
+    ok = await _apply_field(tid, "ref", (msg.text or "").strip())
+    await state.clear()
+    await msg.answer("✅ Реферальная ссылка обновлена." if ok else "❌ Не удалось обновить ссылку.")
+    fake_cb = CallbackQuery(id="0", from_user=msg.from_user, chat_instance="", message=msg)
+    fake_cb.data = f"ga:go:{tid}"
+    await ga_go(fake_cb)  # type: ignore[arg-type]
+
+
+@router.message(GAForm.wait_dep)
+async def ga_set_dep(msg: Message, state: FSMContext):
+    if not _is_ga(msg.from_user.id):
+        return
+    data = await state.get_data()
+    tid = data.get("ga_tid")
+    ok = await _apply_field(tid, "dep", (msg.text or "").strip())
+    await state.clear()
+    await msg.answer("✅ Ссылка для депозита обновлена." if ok else "❌ Не удалось обновить ссылку.")
+    fake_cb = CallbackQuery(id="0", from_user=msg.from_user, chat_instance="", message=msg)
+    fake_cb.data = f"ga:go:{tid}"
+    await ga_go(fake_cb)  # type: ignore[arg-type]
+
+
+@router.message(GAForm.wait_miniapp)
+async def ga_set_miniapp(msg: Message, state: FSMContext):
+    if not _is_ga(msg.from_user.id):
+        return
+    data = await state.get_data()
+    tid = data.get("ga_tid")
+    ok = await _apply_field(tid, "miniapp", (msg.text or "").strip())
+    await state.clear()
+    await msg.answer("✅ Web-app URL обновлён." if ok else "❌ Не удалось обновить Web-app URL.")
+    fake_cb = CallbackQuery(id="0", from_user=msg.from_user, chat_instance="", message=msg)
+    fake_cb.data = f"ga:go:{tid}"
+    await ga_go(fake_cb)  # type: ignore[arg-type]
+
+
+@router.message(GAForm.wait_channel)
+async def ga_set_channel(msg: Message, state: FSMContext):
+    if not _is_ga(msg.from_user.id):
+        return
+    data = await state.get_data()
+    tid = data.get("ga_tid")
+    ok = await _apply_field(tid, "channel", (msg.text or "").strip())
+    await state.clear()
+    await msg.answer("✅ Канал обновлён." if ok else "❌ Не удалось обновить канал.")
+    fake_cb = CallbackQuery(id="0", from_user=msg.from_user, chat_instance="", message=msg)
+    fake_cb.data = f"ga:go:{tid}"
+    await ga_go(fake_cb)  # type: ignore[arg-type]

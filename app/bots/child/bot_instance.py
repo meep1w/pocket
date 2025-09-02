@@ -291,24 +291,22 @@ def parse_channel_field(raw: str) -> tuple[Optional[Union[int, str]], Optional[s
 async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
     """
     Строгая, но более устойчивая проверка:
-    - приватный канал поддержан через ID вида -100... (кастим к int);
-    - если username: пробуем '@name' и без '@' (на всякий случай);
-    - Forbidden/BadRequest → False (не пускаем дальше), но логируем причину.
+    - приватный канал: ID '-100...' приводим к int;
+    - публичный: пробуем '@name' и 'name' (без @);
+    - Forbidden/BadRequest -> False, но логируем причину для диагностики.
     """
     ident, _ = parse_channel_field(channel_url or "")
     if not ident:
-        # админ не задал идентификатор — не блокируем
-        return True
+        return True  # не задан канал — не блокируем
 
-    # подготавливаем chat_id:
     chat_id = ident
     try:
-        if ident.startswith("-100") and ident[1:].isdigit():
-            chat_id = int(ident)  # для приватных чатов/каналов надёжнее int
+        s = ident.strip()
+        if s.startswith("-100") and s[1:].isdigit():
+            chat_id = int(s)  # приватка: int работает стабильнее
     except Exception:
         pass
 
-    # пробуем основную попытку
     try:
         m = await bot.get_chat_member(chat_id, user_id)
         status = getattr(m, "status", None)
@@ -316,7 +314,7 @@ async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
 
     except TelegramBadRequest as e:
         msg = str(e).lower()
-        # если username: попробуем без '@' (редкий, но встречается баг)
+        # иногда '@name' срабатывает без '@'
         if isinstance(chat_id, str) and chat_id.startswith("@"):
             try:
                 m = await bot.get_chat_member(chat_id[1:], user_id)
@@ -324,27 +322,17 @@ async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
                 return status in ("member", "administrator", "creator", "restricted")
             except Exception:
                 pass
-
-        # типичные кейсы → считаем, что НЕ подписан
-        bad_signs = (
-            "chat not found", "user not found", "not enough rights", "channel private",
-            "need administrator rights", "have no rights"
-        )
-        if any(s in msg for s in bad_signs):
-            print(f"[subscribe-check][badrequest] ident={ident} uid={user_id} err={e}")
-            return False
-        print(f"[subscribe-check][badrequest-other] ident={ident} uid={user_id} err={e}")
+        print(f"[subscribe-check][badrequest] ident={ident} uid={user_id} err={e}")
         return False
 
     except TelegramForbiddenError as e:
-        # бот не в чате / нет прав — считаем, что не подписан
         print(f"[subscribe-check][forbidden] ident={ident} uid={user_id} err={e}")
         return False
 
     except Exception as e:
-        # сетевые/прочие ошибки — не пропускаем
         print(f"[subscribe-check][unexpected] ident={ident} uid={user_id} err={e!r}")
         return False
+
 
 
 
@@ -987,6 +975,46 @@ async def run_child_bot(tenant: Tenant):
                 return
 
             await render_lang_screen(bot, tenant, user, current_lang=None)
+        finally:
+            db.close()
+
+    @r.message(Command("subdebug"))
+    async def subdebug(msg: Message):
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(
+                User.tenant_id == tenant.id,
+                User.tg_user_id == msg.from_user.id
+            ).first()
+            if not user:
+                await msg.answer("user not found");
+                return
+
+            t = get_fresh_tenant(db, tenant.id) or tenant
+            ident, open_url = parse_channel_field(t.channel_url or "")
+
+            chat_id = ident
+            try:
+                if ident and ident.startswith("-100") and ident[1:].isdigit():
+                    chat_id = int(ident)
+            except Exception:
+                pass
+
+            try:
+                m = await bot.get_chat_member(chat_id, user.tg_user_id)
+                status_text = f"OK status={getattr(m, 'status', None)!r}"
+            except Exception as e:
+                status_text = f"ERR {type(e).__name__}: {e}"
+
+            await msg.answer(
+                "🔎 <b>Диагностика подписки</b>\n"
+                f"channel_url: <code>{t.channel_url or ''}</code>\n"
+                f"ident: <code>{ident or ''}</code>\n"
+                f"chat_id(type): <code>{repr(chat_id)} ({type(chat_id).__name__})</code>\n"
+                f"open_url: <code>{open_url or ''}</code>\n"
+                f"get_chat_member: <code>{status_text}</code>\n",
+                disable_web_page_preview=True
+            )
         finally:
             db.close()
 

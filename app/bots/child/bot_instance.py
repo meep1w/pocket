@@ -1109,6 +1109,8 @@ async def run_child_bot(tenant: Tenant):
                 or (c.data or "").startswith("adm:cl:")
                 or (c.data or "").startswith("adm:param:")
                 or (c.data or "").startswith("adm:bc:")
+                or (c.data or "").startswith("adm:cks:")  # новый список экранов
+                or (c.data or "").startswith("adm:noop")
         )
     )
     async def admin_router(cb: CallbackQuery, state: FSMContext):

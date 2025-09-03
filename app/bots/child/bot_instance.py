@@ -910,14 +910,13 @@ def kb_params(cfg: TenantConfig):
 def kb_broadcast_segments():
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(text="👥 Все", callback_data="adm:bs:all"),
-                InlineKeyboardButton(text="📝 Зарегистрировались", callback_data="adm:bs:registered"),
-                InlineKeyboardButton(text="💰 С депозитом", callback_data="adm:bs:deposited"),
-            ],
+            [InlineKeyboardButton(text="👥 Все пользователи", callback_data="adm:bs:all")],
+            [InlineKeyboardButton(text="📝 Только зарегистрированные", callback_data="adm:bs:registered")],
+            [InlineKeyboardButton(text="💰 С депозитом", callback_data="adm:bs:deposited")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:menu")],
         ]
     )
+
 
 
 def editor_status_text(db, tenant_id: int, key: str, lang: str) -> str:
@@ -1729,58 +1728,126 @@ async def run_child_bot(tenant: Tenant):
             await cb.answer("URL очищен"); return
 
         # ----- Рассылка: выбор сегмента → ввод контента
+        # --- Открыть мастер рассылки
+        if data == "adm:broadcast":
+            await state.clear()
+            await state.set_state(AdminForm.bcast_wait_segment)
+            await cb.message.edit_text(
+                "📣 <b>Рассылка</b>\nВыберите сегмент получателей:",
+                reply_markup=kb_broadcast_segments()
+            )
+            await cb.answer();
+            return
+
+        # --- Выбор сегмента → сбор контента
         if data.startswith("adm:bs:"):
             seg = data.split(":")[2]
             if seg not in {"all", "registered", "deposited"}:
                 seg = "all"
-            await state.update_data(bcast_segment=seg)
-            await state.set_state(AdminForm.bcast_wait_content)
-            await cb.message.edit_text("📣 Рассылка: выберите сегмент и пришлите контент.\nЗатем нажмите «Запустить».")
-            await cb.answer(); return
 
-        # ----- Запуск рассылки
+            # Подсчитаем получателей заранее
+            db = SessionLocal()
+            try:
+                q = db.query(User).filter(User.tenant_id == tenant.id)
+                if seg == "registered":
+                    q = q.filter(User.step >= UserStep.registered)
+                elif seg == "deposited":
+                    q = q.filter(User.step == UserStep.deposited)
+                recipients = q.count()
+            finally:
+                db.close()
+
+            await state.update_data(bcast_segment=seg, bcast_recipients=recipients)
+            await state.set_state(AdminForm.bcast_wait_content)
+
+            if recipients == 0:
+                txt = "📣 <b>Рассылка</b>\nВыбранный сегмент пустой. Выберите другой сегмент."
+                await cb.message.edit_text(txt, reply_markup=kb_broadcast_segments())
+                await cb.answer();
+                return
+
+            await cb.message.edit_text(
+                f"📣 <b>Рассылка</b>\nПолучателей: <b>{recipients}</b>\n\n"
+                "Пришлите контент (<b>текст/фото/видео/документ</b>).\n"
+                "После этого появится кнопка «Запустить».",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:broadcast")]
+                ])
+            )
+            await cb.answer();
+            return
+
+        # --- Запуск рассылки
         if data == "adm:bc:run":
             data_state = await state.get_data()
             seg = data_state.get("bcast_segment", "all")
             text = data_state.get("bcast_text") or ""
             media_id = data_state.get("bcast_media")
-            await cb.message.edit_text("📣 Рассылка поставлена в очередь. Отправка будет дозировано (≤ rate/час).",
-                                       reply_markup=kb_admin_main())
+            media_kind = data_state.get("bcast_media_kind")
+
+            # Соберём список получателей
+            db = SessionLocal()
+            try:
+                q = db.query(User).filter(User.tenant_id == tenant.id)
+                if seg == "registered":
+                    q = q.filter(User.step >= UserStep.registered)
+                elif seg == "deposited":
+                    q = q.filter(User.step == UserStep.deposited)
+                users = [u.tg_user_id for u in q.all() if u.tg_user_id]
+            finally:
+                db.close()
+
+            total = len(users)
+            if total == 0:
+                await cb.message.edit_text(
+                    "📣 В выбранном сегменте нет получателей.",
+                    reply_markup=kb_broadcast_segments()
+                )
+                await cb.answer();
+                return
+
+            # Частота (в час): по умолчанию 60/ч; min 10/ч, max 3600/ч
+            rate = int(getattr(settings, "broadcast_rate_per_hour", 60) or 60)
+            rate = max(10, min(rate, 3600))
+            interval = max(1.0, 3600.0 / rate)
+
+            await cb.message.edit_text(
+                f"📣 Рассылка запущена.\nПолучателей: <b>{total}</b>\n"
+                f"Скорость: ~{rate}/ч (~{interval:.1f}с/сообщение)\n\n"
+                "Итог по завершении придёт сюда.",
+                reply_markup=kb_admin_main()
+            )
             await state.clear()
 
-            async def _run_broadcast(seg: str, text: str, media_id: Optional[str]):
-                db = SessionLocal()
-                try:
-                    q = db.query(User).filter(User.tenant_id == tenant.id)
-                    if seg == "registered":
-                        q = q.filter(User.step >= UserStep.registered)
-                    elif seg == "deposited":
-                        q = q.filter(User.step == UserStep.deposited)
-                    users = [u.tg_user_id for u in q.all() if u.tg_user_id]
-                finally:
-                    db.close()
-
-                rate = max(1, int(getattr(settings, "broadcast_rate_per_hour", 40) or 40))
-                interval = max(90, int(3600 / rate))
-
+            async def _run_broadcast():
                 sent = 0
                 failed = 0
+                bot_local = cb.message.bot
+
                 for uid in users:
                     try:
-                        if media_id:
-                            await bot.send_photo(uid, media_id, caption=text or "")
+                        if media_kind == "photo":
+                            await bot_local.send_photo(uid, media_id, caption=text or "")
+                        elif media_kind == "video":
+                            await bot_local.send_video(uid, media_id, caption=text or "")
+                        elif media_kind == "document":
+                            await bot_local.send_document(uid, media_id, caption=text or "")
                         else:
-                            await bot.send_message(uid, text or "")
+                            await bot_local.send_message(uid, text or "")
                         sent += 1
                     except Exception:
                         failed += 1
                     await asyncio.sleep(interval)
 
                 with contextlib.suppress(Exception):
-                    await bot.send_message(tenant.owner_tg_id, f"📣 Рассылка завершена. Отправлено: {sent}, ошибок: {failed}.")
+                    await bot_local.send_message(
+                        tenant.owner_tg_id,
+                        f"📣 Рассылка завершена.\nОтправлено: <b>{sent}</b>\nОшибок: <b>{failed}</b>."
+                    )
 
-            asyncio.create_task(_run_broadcast(seg, text, media_id))
-            await cb.answer(); return
+            asyncio.create_task(_run_broadcast(), name=f"broadcast-{tenant.id}")
+            await cb.answer();
+            return
 
         # если что-то иное — домой
         await cb.answer()
@@ -2103,21 +2170,53 @@ async def run_child_bot(tenant: Tenant):
     async def bcast_collect(msg: Message, state: FSMContext):
         if msg.from_user.id != tenant.owner_tg_id:
             return
+
         data = await state.get_data()
-        seg = data["bcast_segment"]
-        text = msg.caption if msg.photo else msg.text
-        media_id = msg.photo[-1].file_id if msg.photo else None
-        await state.update_data(bcast_text=text, bcast_media=media_id)
+        seg = data.get("bcast_segment", "all")
+        recipients = int(data.get("bcast_recipients", 0) or 0)
+
+        media_id = None
+        media_kind = None
+        text = None
+
+        if msg.photo:
+            media_id = msg.photo[-1].file_id
+            media_kind = "photo"
+            text = msg.caption or ""
+        elif msg.video:
+            media_id = msg.video.file_id
+            media_kind = "video"
+            text = msg.caption or ""
+        elif msg.document:
+            media_id = msg.document.file_id
+            media_kind = "document"
+            text = msg.caption or ""
+        else:
+            text = msg.text or ""
+
+        if not (text or media_id):
+            await msg.answer("Нужно отправить текст или медиа (фото/видео/документ). Попробуйте ещё раз.")
+            return
+
+        await state.update_data(bcast_text=text, bcast_media=media_id, bcast_media_kind=media_kind)
+
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="🚀 Запустить", callback_data="adm:bc:run")],
                 [InlineKeyboardButton(text="❌ Отмена", callback_data="adm:menu")],
             ]
         )
-        if media_id:
-            await msg.answer_photo(media_id, caption="<b>Предпросмотр рассылки</b>\n" + (text or ""), reply_markup=kb)
+
+        head = f"<b>Предпросмотр рассылки</b>\nСегмент: <code>{seg}</code> • Получателей: <b>{recipients}</b>\n"
+        if media_kind == "photo":
+            await msg.answer_photo(media_id, caption=head + (text or ""), reply_markup=kb)
+        elif media_kind == "video":
+            await msg.answer_video(media_id, caption=head + (text or ""), reply_markup=kb)
+        elif media_kind == "document":
+            await msg.answer_document(media_id, caption=head + (text or ""), reply_markup=kb)
         else:
-            await msg.answer("<b>Предпросмотр рассылки</b>\n" + (text or ""), reply_markup=kb)
+            await msg.answer(head + (text or ""), reply_markup=kb)
+
         await state.set_state(AdminForm.bcast_confirm)
 
     @r.message(AdminForm.params_wait_min_dep)

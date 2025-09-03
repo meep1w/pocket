@@ -238,7 +238,24 @@ def _find_stock_file(key: str, locale: str) -> Optional[Path]:
                 return p
     return None
 
-
+async def _safe_edit_msg(cb: CallbackQuery, text: str, kb=None):
+    # сначала пробуем как текст
+    try:
+        await cb.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True)
+        return
+    except Exception:
+        pass
+    # если было медиа — правим подпись
+    try:
+        await cb.message.edit_caption(caption=text, reply_markup=kb)
+        return
+    except Exception:
+        pass
+    # крайний случай — присылаем новое сообщение
+    try:
+        await cb.message.answer(text, reply_markup=kb, disable_web_page_preview=True)
+    except Exception:
+        pass
 # ---------------------- ПОДПИСКА (fixed) ----------------------
 def parse_channel_field(raw: str) -> tuple[Optional[Union[int, str]], Optional[str]]:
     """
@@ -1811,12 +1828,14 @@ async def run_child_bot(tenant: Tenant):
             rate = max(10, min(rate, 3600))
             interval = max(1.0, 3600.0 / rate)
 
-            await cb.message.edit_text(
+            await _safe_edit_msg(
+                cb,
                 f"📣 Рассылка запущена.\nПолучателей: <b>{total}</b>\n"
                 f"Скорость: ~{rate}/ч (~{interval:.1f}с/сообщение)\n\n"
                 "Итог по завершении придёт сюда.",
-                reply_markup=kb_admin_main()
+                kb_admin_main()
             )
+
             await state.clear()
 
             async def _run_broadcast():

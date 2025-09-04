@@ -1828,17 +1828,22 @@ async def run_child_bot(tenant: Tenant):
             try:
                 uid = int(data.split(":")[2])
             except Exception:
-                await cb.answer("Некорректный ID");
+                await cb.answer("Некорректный ID")
                 return
 
             db = SessionLocal()
             try:
-                u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
+                u = db.query(User).filter(
+                    User.tenant_id == tenant.id,
+                    User.tg_user_id == uid
+                ).first()
                 if not u:
-                    await cb.answer("Пользователь не найден");
+                    await cb.answer("Пользователь не найден")
                     return
+
                 # сумма депозитов
                 dep_total = get_deposit_total(db, tenant.id, u)
+
                 # статус по шагам
                 step_map = {
                     UserStep.new: "new",
@@ -1848,12 +1853,25 @@ async def run_child_bot(tenant: Tenant):
                     UserStep.deposited: "deposited",
                 }
                 step = step_map.get(u.step, str(u.step))
+
                 # доступ (учёт require_deposit)
                 cfg = get_cfg(db, tenant.id)
                 has_access = dep_total >= cfg.min_deposit if cfg.require_deposit else (u.step >= UserStep.registered)
+
                 # дата обновления
                 upd = getattr(u, "updated_at", None)
                 upd_str = upd.strftime("%Y-%m-%d %H:%M:%S") if upd else "—"
+
+                # Trader ID (берём из первого postback регистрации)
+                pb_reg = db.query(Postback).filter(
+                    Postback.tenant_id == tenant.id,
+                    Postback.event == "registration",
+                    Postback.click_id == str(u.tg_user_id),
+                    Postback.token_ok.is_(True)
+                ).order_by(Postback.created_at.asc()).first()
+
+                trader_id = pb_reg.trader_id if pb_reg else "—"
+
             finally:
                 db.close()
 
@@ -1865,6 +1883,7 @@ async def run_child_bot(tenant: Tenant):
             txt = (
                 f"👤 <b>Профиль пользователя</b>\n"
                 f"TG ID: <code>{uid}</code>\n"
+                f"Trader ID: <code>{trader_id}</code>\n"
                 f"Username: {uname}\n"
                 f"Язык: <code>{locale}</code>\n"
                 f"Статус: <b>{step}</b>  |  Доступ: {access_emoji}\n"
@@ -1879,7 +1898,7 @@ async def run_child_bot(tenant: Tenant):
             ])
 
             await _safe_edit_msg(cb, txt, kb)
-            await cb.answer();
+            await cb.answer()
             return
 
         # ----- Рассылка: выбор сегмента → ввод контента

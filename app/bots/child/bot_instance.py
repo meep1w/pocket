@@ -1801,6 +1801,8 @@ async def run_child_bot(tenant: Tenant):
             text = data_state.get("bcast_text") or ""
             media_id = data_state.get("bcast_media")
             media_kind = data_state.get("bcast_media_kind")
+            src_chat_id = data_state.get("bcast_src_chat")
+            src_msg_id = data_state.get("bcast_src_msg")
 
             # Соберём список получателей
             db = SessionLocal()
@@ -1841,37 +1843,63 @@ async def run_child_bot(tenant: Tenant):
             async def _run_broadcast():
                 sent = 0
                 failed = 0
+                errors: dict[str, int] = {}
                 bot_local = cb.message.bot
 
                 for uid in users:
                     try:
-                        if media_kind == "photo":
-                            await bot_local.send_photo(uid, media_id, caption=text or "")
-                        elif media_kind == "video":
-                            await bot_local.send_video(uid, media_id, caption=text or "")
-                        elif media_kind == "document":
-                            await bot_local.send_document(uid, media_id, caption=text or "")
+                        if src_chat_id and src_msg_id:
+                            # Копируем оригинальное сообщение 1-в-1 (и текст, и медиа)
+                            await bot_local.copy_message(
+                                chat_id=uid,
+                                from_chat_id=src_chat_id,
+                                message_id=src_msg_id
+                            )
                         else:
-                            await bot_local.send_message(uid, text or "")
+                            # Фолбэк: отправка «как раньше»
+                            if media_kind == "photo":
+                                await bot_local.send_photo(uid, media_id, caption=text or "")
+                            elif media_kind == "video":
+                                await bot_local.send_video(uid, media_id, caption=text or "")
+                            elif media_kind == "document":
+                                await bot_local.send_document(uid, media_id, caption=text or "")
+                            elif media_kind == "animation":
+                                await bot_local.send_animation(uid, media_id, caption=text or "")
+                            else:
+                                await bot_local.send_message(uid, text or "")
                         sent += 1
-                    except Exception:
+                    except Exception as e:
                         failed += 1
+                        msg = str(e)
+                        if "blocked by the user" in msg:
+                            key = "blocked_by_user"
+                        elif "can't initiate conversation" in msg or "initiate conversation" in msg:
+                            key = "no_start_from_user"
+                        elif "chat not found" in msg:
+                            key = "chat_not_found"
+                        elif "user is deactivated" in msg:
+                            key = "user_deactivated"
+                        else:
+                            key = msg[:120]
+                        errors[key] = errors.get(key, 0) + 1
                     await asyncio.sleep(interval)
 
+                parts = [f"📣 Рассылка завершена.\nОтправлено: <b>{sent}</b>\nОшибок: <b>{failed}</b>"]
+                if failed:
+                    top = sorted(errors.items(), key=lambda x: -x[1])[:5]
+                    parts.append("\nПричины ошибок:")
+                    for k, n in top:
+                        title = {
+                            "blocked_by_user": "пользователь заблокировал бота",
+                            "no_start_from_user": "юзер не писал боту",
+                            "chat_not_found": "чат не найден (id устарел/невалиден)",
+                            "user_deactivated": "аккаунт удалён",
+                        }.get(k, k)
+                        parts.append(f"• {title}: <b>{n}</b>")
+                summary = "\n".join(parts)
+
                 with contextlib.suppress(Exception):
-                    await bot_local.send_message(
-                        tenant.owner_tg_id,
-                        f"📣 Рассылка завершена.\nОтправлено: <b>{sent}</b>\nОшибок: <b>{failed}</b>."
-                    )
-
-            asyncio.create_task(_run_broadcast(), name=f"broadcast-{tenant.id}")
-            await cb.answer();
-            return
-
-        # если что-то иное — домой
-        await cb.answer()
-        return
-        # ---- end admin_router
+                    await bot_local.send_message(tenant.owner_tg_id, summary)
 
     # ---- Admin: LINK inputs
     @r.message(AdminForm.waiting_support)
@@ -2210,14 +2238,25 @@ async def run_child_bot(tenant: Tenant):
             media_id = msg.document.file_id
             media_kind = "document"
             text = msg.caption or ""
+        elif msg.animation:
+            media_id = msg.animation.file_id
+            media_kind = "animation"
+            text = msg.caption or ""
         else:
             text = msg.text or ""
 
         if not (text or media_id):
-            await msg.answer("Нужно отправить текст или медиа (фото/видео/документ). Попробуйте ещё раз.")
+            await msg.answer("Нужно отправить текст или медиа (фото/видео/документ/GIF). Попробуйте ещё раз.")
             return
 
-        await state.update_data(bcast_text=text, bcast_media=media_id, bcast_media_kind=media_kind)
+        # Сохраняем всё + координаты исходного сообщения для copy_message
+        await state.update_data(
+            bcast_text=text,
+            bcast_media=media_id,
+            bcast_media_kind=media_kind,
+            bcast_src_chat=msg.chat.id,
+            bcast_src_msg=msg.message_id,
+        )
 
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -2233,6 +2272,8 @@ async def run_child_bot(tenant: Tenant):
             await msg.answer_video(media_id, caption=head + (text or ""), reply_markup=kb)
         elif media_kind == "document":
             await msg.answer_document(media_id, caption=head + (text or ""), reply_markup=kb)
+        elif media_kind == "animation":
+            await msg.answer_animation(media_id, caption=head + (text or ""), reply_markup=kb)
         else:
             await msg.answer(head + (text or ""), reply_markup=kb)
 

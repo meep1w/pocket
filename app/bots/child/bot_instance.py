@@ -238,6 +238,8 @@ def _find_stock_file(key: str, locale: str) -> Optional[Path]:
                 return p
     return None
 
+USERS_PER_PAGE = 10
+
 async def _safe_edit_msg(cb: CallbackQuery, text: str, kb=None):
     # сначала пробуем как текст
     try:
@@ -256,6 +258,17 @@ async def _safe_edit_msg(cb: CallbackQuery, text: str, kb=None):
         await cb.message.answer(text, reply_markup=kb, disable_web_page_preview=True)
     except Exception:
         pass
+
+async def _try_username(bot: Bot, uid: int) -> str:
+    # Ленивая попытка получить username (на странице 10 штук — норм)
+    try:
+        chat = await bot.get_chat(uid)
+        if getattr(chat, "username", None):
+            return f"@{chat.username}"
+    except Exception:
+        pass
+    return "—"
+
 # ---------------------- ПОДПИСКА (fixed) ----------------------
 def parse_channel_field(raw: str) -> tuple[Optional[Union[int, str]], Optional[str]]:
     """
@@ -824,6 +837,7 @@ def kb_admin_main():
             [InlineKeyboardButton(text="⚙️ Параметры", callback_data="adm:params")],
             [InlineKeyboardButton(text="👑 PLATINUM", callback_data="adm:vip")],
             [InlineKeyboardButton(text="📣 Рассылка", callback_data="adm:broadcast")],
+            [InlineKeyboardButton(text="👥 Ваши рефы", callback_data="adm:users")],
             [InlineKeyboardButton(text="📊 Статистика", callback_data="adm:stats")],
         ]
     )
@@ -1743,6 +1757,127 @@ async def run_child_bot(tenant: Tenant):
             finally:
                 db.close()
             await cb.answer("URL очищен"); return
+
+        # ---- Ваши рефы: вход в список (стр.1)
+        if data == "adm:users":
+            page = 1
+            db = SessionLocal()
+            try:
+                q = db.query(User).filter(User.tenant_id == tenant.id)
+                total = q.count()
+                users = q.order_by(User.updated_at.desc().nullslast()).offset((page - 1) * USERS_PER_PAGE).limit(
+                    USERS_PER_PAGE).all()
+            finally:
+                db.close()
+
+            rows = []
+            # Подтянем username’ы лениво
+            for u in users:
+                uname = await _try_username(cb.message.bot, u.tg_user_id) if u.tg_user_id else "—"
+                title = f"{u.tg_user_id or '—'} • {uname}"
+                rows.append([InlineKeyboardButton(text=title, callback_data=f"adm:user:{u.tg_user_id}")])
+
+            nav = []
+            if total > page * USERS_PER_PAGE:
+                nav.append(InlineKeyboardButton(text="Вперёд »", callback_data=f"adm:users:page:{page + 1}"))
+            rows.append(nav) if nav else None
+            rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:menu")])
+
+            text = f"👥 <b>Ваши рефы</b>\nВсего: <b>{total}</b>\nСтр. {page}"
+            await _safe_edit_msg(cb, text, InlineKeyboardMarkup(inline_keyboard=rows))
+            await cb.answer();
+            return
+
+        # ---- Ваши рефы: пагинация
+        if data.startswith("adm:users:page:"):
+            page = int(data.split(":")[3])
+            if page < 1: page = 1
+            db = SessionLocal()
+            try:
+                q = db.query(User).filter(User.tenant_id == tenant.id)
+                total = q.count()
+                users = q.order_by(User.updated_at.desc().nullslast()).offset((page - 1) * USERS_PER_PAGE).limit(
+                    USERS_PER_PAGE).all()
+            finally:
+                db.close()
+
+            rows = []
+            for u in users:
+                uname = await _try_username(cb.message.bot, u.tg_user_id) if u.tg_user_id else "—"
+                title = f"{u.tg_user_id or '—'} • {uname}"
+                rows.append([InlineKeyboardButton(text=title, callback_data=f"adm:user:{u.tg_user_id}")])
+
+            nav = []
+            if page > 1:
+                nav.append(InlineKeyboardButton(text="« Назад", callback_data=f"adm:users:page:{page - 1}"))
+            if total > page * USERS_PER_PAGE:
+                nav.append(InlineKeyboardButton(text="Вперёд »", callback_data=f"adm:users:page:{page + 1}"))
+            if nav: rows.append(nav)
+            rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="adm:menu")])
+
+            text = f"👥 <b>Ваши рефы</b>\nВсего: <b>{total}</b>\nСтр. {page}"
+            await _safe_edit_msg(cb, text, InlineKeyboardMarkup(inline_keyboard=rows))
+            await cb.answer();
+            return
+
+        # ---- Карточка пользователя
+        if data.startswith("adm:user:"):
+            try:
+                uid = int(data.split(":")[2])
+            except Exception:
+                await cb.answer("Некорректный ID");
+                return
+
+            db = SessionLocal()
+            try:
+                u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
+                if not u:
+                    await cb.answer("Пользователь не найден");
+                    return
+                # сумма депозитов
+                dep_total = get_deposit_total(db, tenant.id, u)
+                # статус по шагам
+                step_map = {
+                    UserStep.new: "new",
+                    UserStep.asked_reg: "asked_reg",
+                    UserStep.registered: "registered",
+                    UserStep.asked_deposit: "asked_deposit",
+                    UserStep.deposited: "deposited",
+                }
+                step = step_map.get(u.step, str(u.step))
+                # доступ (учёт require_deposit)
+                cfg = get_cfg(db, tenant.id)
+                has_access = dep_total >= cfg.min_deposit if cfg.require_deposit else (u.step >= UserStep.registered)
+                # дата обновления
+                upd = getattr(u, "updated_at", None)
+                upd_str = upd.strftime("%Y-%m-%d %H:%M:%S") if upd else "—"
+            finally:
+                db.close()
+
+            uname = await _try_username(cb.message.bot, uid)
+            locale = u.lang or (get_fresh_tenant(SessionLocal(), tenant.id) or tenant).lang_default or "ru"
+            access_emoji = "✅" if has_access else "❌"
+            vip_flag = "✅" if getattr(u, "is_vip", False) else "❌"
+
+            txt = (
+                f"👤 <b>Профиль пользователя</b>\n"
+                f"TG ID: <code>{uid}</code>\n"
+                f"Username: {uname}\n"
+                f"Язык: <code>{locale}</code>\n"
+                f"Статус: <b>{step}</b>  |  Доступ: {access_emoji}\n"
+                f"PLATINUM: {vip_flag}\n"
+                f"Депозиты: <b>${dep_total}</b>\n"
+                f"Обновлён: {upd_str}\n"
+            )
+
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ К списку рефов", callback_data="adm:users")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="adm:menu")],
+            ])
+
+            await _safe_edit_msg(cb, txt, kb)
+            await cb.answer();
+            return
 
         # ----- Рассылка: выбор сегмента → ввод контента
         # --- Открыть мастер рассылки

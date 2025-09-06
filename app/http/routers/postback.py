@@ -17,12 +17,33 @@ router = APIRouter()
 
 # ----------------------- helpers -----------------------
 def norm_event(raw: str) -> str:
-    r = (raw or "").lower()
+    r = (raw or "").lower().strip()
+    # регистрируем всё, что похоже на регистрацию
     if r in ("reg", "registration", "signup", "sign_up"):
         return "registration"
-    if r in ("dep", "deposit", "payment"):
+    # любые варианты депозитов -> единый "deposit" (чтобы всё копилось)
+    if r in (
+        "dep", "deposit", "payment", "first_deposit", "repeat_deposit", "deposit_repeat",
+        "redeposit", "additional_deposit", "extra_deposit"
+    ):
         return "deposit"
     return r
+
+
+def _parse_sum(params: dict) -> float:
+    # Берём из любых распространённых ключей
+    candidates = [params.get("sum"), params.get("sumdep"), params.get("amount"), params.get("amt")]
+    for v in candidates:
+        if v is None:
+            continue
+        s = str(v).replace(",", ".").strip()
+        if not s:
+            continue
+        try:
+            return float(s)
+        except Exception:
+            continue
+    return 0.0
 
 
 def default_img_url(key: str, locale: str) -> str:
@@ -34,6 +55,7 @@ def _dep_total(db, tenant_id: int, user: Optional[User], click_id_param: Optiona
     """
     Возвращает суммарный депозит по ключу click_id.
     Предпочитаем tg_user_id пользователя (если есть), иначе – click_id из запроса.
+    Считаем ВСЕ депозиты (все "deposit" после нормализации).
     """
     key = None
     if user and user.tg_user_id:
@@ -63,11 +85,11 @@ async def handle_postback(request: Request):
     token = params.get("t")
     click_id = params.get("click_id")
     trader_id = params.get("trader_id")
-    sum_str = params.get("sum") or "0"
-    try:
-        sum_val = int(float(sum_str))
-    except Exception:
-        sum_val = 0
+
+    sum_val = _parse_sum(params)
+    sum_int = int(sum_val)  # для хранения в int поле, если у тебя sum:int; при желании можно сменить на Decimal/Float
+
+    raw_query_str = str(params)
 
     db = SessionLocal()
     try:
@@ -88,18 +110,19 @@ async def handle_postback(request: Request):
         if not token_ok:
             db.add(Postback(
                 tenant_id=tenant_id, event=event, click_id=click_id, trader_id=trader_id,
-                sum=sum_val, token_ok=False, raw_query=str(params)
+                sum=sum_int, token_ok=False, raw_query=raw_query_str
             ))
             db.commit()
             raise HTTPException(status_code=403, detail="forbidden")
 
-        # дедуп один-в-один (по сумме тоже)
+        # мягкая идемпотентность: дублирующийся ТОЧНО такой же raw_query уже был
+        # (не блокируем повторные депозиты на те же суммы, если raw_query отличается)
         existing = db.query(Postback).filter(
             Postback.tenant_id == tenant_id,
             Postback.event == event,
             Postback.click_id == click_id,
-            Postback.sum == sum_val,
             Postback.token_ok.is_(True),
+            Postback.raw_query == raw_query_str,
         ).first()
         if existing:
             return {"ok": True, "dup": True}
@@ -107,7 +130,7 @@ async def handle_postback(request: Request):
         # сохраняем входящий постбэк
         db.add(Postback(
             tenant_id=tenant_id, event=event, click_id=click_id, trader_id=trader_id,
-            sum=sum_val, token_ok=True, raw_query=str(params)
+            sum=sum_int, token_ok=True, raw_query=raw_query_str
         ))
         db.commit()
 
@@ -162,7 +185,7 @@ async def handle_postback(request: Request):
                     user.step = UserStep.deposited
                     db.commit()
 
-        # ----- deposit -----
+        # ----- deposit (включая повторные, всё уже нормализовано) -----
         elif event == "deposit":
             dep_total_now = _dep_total(db, tenant_id, user, click_id)
 
@@ -267,7 +290,8 @@ async def handle_postback(request: Request):
                         "Доступ открыт. Нажмите «Получить сигнал».",
                         "Access granted. Press 'Get signal'."
                     )
-                    webapp = f"{settings.miniapp_url}?tenant_id={tenant_id}&uid={user.tg_user_id}"
+                    webapp_base = (t.miniapp_url or settings.miniapp_url).rstrip("/")
+                    webapp = f"{webapp_base}?tenant_id={tenant_id}&uid={user.tg_user_id}"
                     kb = InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(
                             text=("📈 Получить сигнал" if locale == "ru" else "📈 Get signal"),
@@ -290,7 +314,7 @@ async def handle_postback(request: Request):
                         m = await bot.send_message(user.tg_user_id, text, reply_markup=kb)
                 else:
                     # STEP 2 (депозит)
-                    left = max(0, cfg.min_deposit - dep_total)
+                    left = max(0, int(cfg.min_deposit) - dep_total)
                     text, img = get_tt(
                         "step2",
                         "Шаг 2. Внесите депозит (≥ ${{min_dep}}).",

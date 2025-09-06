@@ -21,7 +21,7 @@ from app.models import Tenant, User, UserStep, TenantText, TenantConfig, Postbac
 from app.db import SessionLocal
 from app.settings import settings
 from app.utils.common import safe_delete_message
-
+from math import ceil
 from pathlib import Path
 
 # ---------------------- ЭКРАНЫ / КЛЮЧИ ----------------------
@@ -195,6 +195,37 @@ DEFAULT_TEXTS = {
 
 }
 
+def _vip_list_build_rows(cands, page: int, page_cb_prefix: str):
+    pages = max(1, ceil(len(cands) / USERS_PER_PAGE))
+    start = (page - 1) * USERS_PER_PAGE
+    chunk = cands[start:start + USERS_PER_PAGE]
+    rows = [[InlineKeyboardButton(text=f"{flag} {tg_id} — ${total}", callback_data="adm:noop")] for tg_id, total, flag in chunk]
+
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton(text="« Назад", callback_data=f"{page_cb_prefix}:{page-1}"))
+    nav.append(InlineKeyboardButton(text=f"Стр. {page}/{pages}", callback_data="adm:noop"))
+    if page < pages:
+        nav.append(InlineKeyboardButton(text="Вперёд »", callback_data=f"{page_cb_prefix}:{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip")])
+    return rows, pages
+
+def _vip_pick_user_rows(user_ids, page: int, page_cb_prefix: str, action_prefix: str):
+    pages = max(1, ceil(len(user_ids) / USERS_PER_PAGE))
+    start = (page - 1) * USERS_PER_PAGE
+    chunk = user_ids[start:start + USERS_PER_PAGE]
+    rows = [[InlineKeyboardButton(text=str(uid), callback_data=f"{action_prefix}:{uid}")] for uid in chunk]
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton(text="« Назад", callback_data=f"{page_cb_prefix}:{page-1}"))
+    nav.append(InlineKeyboardButton(text=f"Стр. {page}/{pages}", callback_data="adm:noop"))
+    if page < pages:
+        nav.append(InlineKeyboardButton(text="Вперёд »", callback_data=f"{page_cb_prefix}:{page+1}"))
+    if nav: rows.append(nav)
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip")])
+    return rows
 
 
 def apply_placeholders(text: str, tenant: Tenant) -> str:
@@ -1255,9 +1286,17 @@ async def run_child_bot(tenant: Tenant):
                 cfg = get_cfg(db, tenant.id)
             finally:
                 db.close()
+
             secret = tenant.postback_secret or settings.global_postback_secret
-            base = settings.service_host
+            base = settings.service_host.rstrip("/")
+
             reg = f"{base}/pb?tenant_id={tenant.id}&event=registration&t={secret}&click_id={{click_id}}&trader_id={{trader_id}}"
+
+            dep = f"{base}/pb?tenant_id={tenant.id}&event=deposit&t={secret}&click_id={{click_id}}&trader_id={{trader_id}}&sum={{sumdep}}"
+
+            redep = f"{base}/pb?tenant_id={tenant.id}&event=deposit_repeat&t={secret}&click_id={{click_id}}&trader_id={{trader_id}}&sum={{sumdep}}"
+
+
             txt = (
                 "<b>Постбэки Pocket Option</b>\n\n"
                 "📝 <b>Регистрация</b>\n"
@@ -1266,11 +1305,17 @@ async def run_child_bot(tenant: Tenant):
                 "• click_id → <code>click_id</code>\n"
                 "• trader_id → <code>trader_id</code>\n\n"
             )
+
             if cfg.require_deposit:
-                dep = f"{base}/pb?tenant_id={tenant.id}&event=deposit&t={secret}&click_id={{click_id}}&trader_id={{trader_id}}&sum={{sumdep}}"
                 txt += (
-                    "💳 <b>Депозит</b>\n"
+                    "💳 <b>Первый депозит</b>\n"
                     f"<code>{dep}</code>\n"
+                    "Макросы в PP (1-в-1):\n"
+                    "• click_id → <code>click_id</code>\n"
+                    "• trader_id → <code>trader_id</code>\n"
+                    "• sumdep → <code>sum</code>\n\n"
+                    "💵 <b>Повторный депозит</b>\n"
+                    f"<code>{redep}</code>\n"
                     "Макросы в PP (1-в-1):\n"
                     "• click_id → <code>click_id</code>\n"
                     "• trader_id → <code>trader_id</code>\n"
@@ -1287,7 +1332,8 @@ async def run_child_bot(tenant: Tenant):
                 ),
                 disable_web_page_preview=True,
             )
-            await cb.answer(); return
+            await cb.answer();
+            return
 
         # ----- LINKS input
         if data == "adm:set:support":
@@ -1500,72 +1546,137 @@ async def run_child_bot(tenant: Tenant):
                 cfg = get_cfg(db, tenant.id)
                 thr = int(cfg.vip_threshold or 500)
                 users = db.query(User).filter(User.tenant_id == tenant.id).all()
-                rows = []
+                cands = []
                 for u in users:
                     total = get_deposit_total(db, tenant.id, u)
                     if total >= thr:
-                        rows.append((u.tg_user_id, total, "✅" if u.is_vip else "❌"))
-                rows.sort(key=lambda x: -x[1])
-                txt = f"<b>Кандидаты PLATINUM (≥ ${thr}):</b>\n\n"
-                if not rows:
-                    txt += "Пока пусто."
-                else:
-                    for tg_id, total, flag in rows[:50]:
-                        txt += f"{flag} <code>{tg_id}</code> — ${total}\n"
+                        cands.append((u.tg_user_id, total, "✅" if u.is_vip else "❌"))
+                cands.sort(key=lambda x: -x[1])
             finally:
                 db.close()
-            kb = InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip")]] )
-            await cb.message.edit_text(txt, reply_markup=kb, disable_web_page_preview=True)
-            await cb.answer(); return
 
+            page = 1
+            rows, pages = _vip_list_build_rows(cands, page, "adm:vip:list:page")
+            txt = f"<b>Кандидаты PLATINUM (≥ ${thr}):</b>\nВсего: {len(cands)}"
+            await cb.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+                                       disable_web_page_preview=True)
+            await cb.answer();
+            return
+
+        if data.startswith("adm:vip:list:page:"):
+            page = int(data.split(":")[-1])
+            db = SessionLocal()
+            try:
+                cfg = get_cfg(db, tenant.id)
+                thr = int(cfg.vip_threshold or 500)
+                users = db.query(User).filter(User.tenant_id == tenant.id).all()
+                cands = []
+                for u in users:
+                    total = get_deposit_total(db, tenant.id, u)
+                    if total >= thr:
+                        cands.append((u.tg_user_id, total, "✅" if u.is_vip else "❌"))
+                cands.sort(key=lambda x: -x[1])
+            finally:
+                db.close()
+
+            rows, pages = _vip_list_build_rows(cands, max(1, page), "adm:vip:list:page")
+            txt = f"<b>Кандидаты PLATINUM (≥ ${thr}):</b>\nВсего: {len(cands)}"
+            await _safe_edit_msg(cb, txt, InlineKeyboardMarkup(inline_keyboard=rows))
+            await cb.answer();
+            return
+
+        # REG
         if data == "adm:vip:reg":
             db = SessionLocal()
             try:
-                users = db.query(User).filter(User.tenant_id == tenant.id).all()
-                rows = []
-                for u in users[:50]:
-                    rows.append([InlineKeyboardButton(text=str(u.tg_user_id), callback_data=f"adm:vip:do:reg:{u.tg_user_id}")])
-                if not rows:
-                    rows = [[InlineKeyboardButton(text="Нет пользователей", callback_data="adm:vip")]]
-                rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip")])
-                kb = InlineKeyboardMarkup(inline_keyboard=rows)
+                user_ids = [u.tg_user_id for u in db.query(User)
+                .filter(User.tenant_id == tenant.id)
+                .order_by(User.updated_at.desc().nullslast()).all() if u.tg_user_id]
             finally:
                 db.close()
-            await cb.message.edit_text("Выберите пользователя для РЕГИСТРАЦИИ (ручной постбэк):", reply_markup=kb)
-            await cb.answer(); return
+            page = 1
+            rows = _vip_pick_user_rows(user_ids, page, "adm:vip:reg:page", "adm:vip:do:reg")
+            await cb.message.edit_text("Выберите пользователя для РЕГИСТРАЦИИ (ручной постбэк):",
+                                       reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+            await cb.answer();
+            return
 
+        if data.startswith("adm:vip:reg:page:"):
+            page = int(data.split(":")[-1])
+            db = SessionLocal()
+            try:
+                user_ids = [u.tg_user_id for u in db.query(User)
+                .filter(User.tenant_id == tenant.id)
+                .order_by(User.updated_at.desc().nullslast()).all() if u.tg_user_id]
+            finally:
+                db.close()
+            rows = _vip_pick_user_rows(user_ids, max(1, page), "adm:vip:reg:page", "adm:vip:do:reg")
+            await _safe_edit_msg(cb, "Выберите пользователя для РЕГИСТРАЦИИ (ручной постбэк):",
+                                 InlineKeyboardMarkup(inline_keyboard=rows))
+            await cb.answer();
+            return
+
+        # DEP
         if data == "adm:vip:dep":
             db = SessionLocal()
             try:
-                users = db.query(User).filter(User.tenant_id == tenant.id).all()
-                rows = []
-                for u in users[:50]:
-                    rows.append([InlineKeyboardButton(text=str(u.tg_user_id), callback_data=f"adm:vip:do:dep:{u.tg_user_id}")])
-                if not rows:
-                    rows = [[InlineKeyboardButton(text="Нет пользователей", callback_data="adm:vip")]]
-                rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip")])
-                kb = InlineKeyboardMarkup(inline_keyboard=rows)
+                user_ids = [u.tg_user_id for u in db.query(User)
+                .filter(User.tenant_id == tenant.id)
+                .order_by(User.updated_at.desc().nullslast()).all() if u.tg_user_id]
             finally:
                 db.close()
-            await cb.message.edit_text("Выберите пользователя для ДЕПОЗИТА (ручной постбэк):", reply_markup=kb)
-            await cb.answer(); return
+            page = 1
+            rows = _vip_pick_user_rows(user_ids, page, "adm:vip:dep:page", "adm:vip:do:dep")
+            await cb.message.edit_text("Выберите пользователя для ДЕПОЗИТА (ручной постбэк):",
+                                       reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+            await cb.answer();
+            return
 
+        if data.startswith("adm:vip:dep:page:"):
+            page = int(data.split(":")[-1])
+            db = SessionLocal()
+            try:
+                user_ids = [u.tg_user_id for u in db.query(User)
+                .filter(User.tenant_id == tenant.id)
+                .order_by(User.updated_at.desc().nullslast()).all() if u.tg_user_id]
+            finally:
+                db.close()
+            rows = _vip_pick_user_rows(user_ids, max(1, page), "adm:vip:dep:page", "adm:vip:do:dep")
+            await _safe_edit_msg(cb, "Выберите пользователя для ДЕПОЗИТА (ручной постбэк):",
+                                 InlineKeyboardMarkup(inline_keyboard=rows))
+            await cb.answer();
+            return
+
+        # GRANT
         if data == "adm:vip:grant":
             db = SessionLocal()
             try:
-                users = db.query(User).filter(User.tenant_id == tenant.id).all()
-                rows = []
-                for u in users[:50]:
-                    rows.append([InlineKeyboardButton(text=str(u.tg_user_id), callback_data=f"adm:vip:set:{u.tg_user_id}")])
-                if not rows:
-                    rows = [[InlineKeyboardButton(text="Нет пользователей", callback_data="adm:vip")]]
-                rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip")])
-                kb = InlineKeyboardMarkup(inline_keyboard=rows)
+                user_ids = [u.tg_user_id for u in db.query(User)
+                .filter(User.tenant_id == tenant.id)
+                .order_by(User.updated_at.desc().nullslast()).all() if u.tg_user_id]
             finally:
                 db.close()
-            await cb.message.edit_text("Выберите пользователя для ВЫДАЧИ PLATINUM:", reply_markup=kb)
-            await cb.answer(); return
+            page = 1
+            rows = _vip_pick_user_rows(user_ids, page, "adm:vip:grant:page", "adm:vip:set")
+            await cb.message.edit_text("Выберите пользователя для ВЫДАЧИ PLATINUM:",
+                                       reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+            await cb.answer();
+            return
+
+        if data.startswith("adm:vip:grant:page:"):
+            page = int(data.split(":")[-1])
+            db = SessionLocal()
+            try:
+                user_ids = [u.tg_user_id for u in db.query(User)
+                .filter(User.tenant_id == tenant.id)
+                .order_by(User.updated_at.desc().nullslast()).all() if u.tg_user_id]
+            finally:
+                db.close()
+            rows = _vip_pick_user_rows(user_ids, max(1, page), "adm:vip:grant:page", "adm:vip:set")
+            await _safe_edit_msg(cb, "Выберите пользователя для ВЫДАЧИ PLATINUM:",
+                                 InlineKeyboardMarkup(inline_keyboard=rows))
+            await cb.answer();
+            return
 
         # ----- VIP per-user miniapp settings
         if data.startswith("adm:vip:miniapp"):

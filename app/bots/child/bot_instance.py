@@ -809,7 +809,8 @@ SCREEN_BUTTONS = {
 def kb_admin_main():
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="👤 Пользователи", callback_data="adm:people")],  # широкая
+            [InlineKeyboardButton(text="👤 Пользователи", callback_data="adm:people")],           # широкая
+            [InlineKeyboardButton(text="🧷 Настройка постбэков", callback_data="adm:pb")],        # широкая (новая)
             [
                 InlineKeyboardButton(text="🧩 Контент", callback_data="adm:content"),
                 InlineKeyboardButton(text="🔗 Ссылки", callback_data="adm:links"),
@@ -818,7 +819,7 @@ def kb_admin_main():
                 InlineKeyboardButton(text="⚙️ Параметры", callback_data="adm:params"),
                 InlineKeyboardButton(text="📣 Рассылка", callback_data="adm:broadcast"),
             ],
-            [InlineKeyboardButton(text="📊 Статистика", callback_data="adm:stats")],  # широкая
+            [InlineKeyboardButton(text="📊 Статистика", callback_data="adm:stats")],              # широкая
         ]
     )
 

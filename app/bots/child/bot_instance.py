@@ -984,7 +984,7 @@ async def _render_admin_user_card(cb: CallbackQuery, tenant: Tenant, uid: int):
     vip_flag = "✅" if getattr(u, "is_vip", False) else "❌"
 
     txt = (
-        f"👤 <b>Профиль пользователя</b>\n"
+        f"👤 <b>Профиль пользователя</b>\n\n"
         f"TG ID: <code>{uid}</code>\n"
         f"Trader ID: <code>{trader_id}</code>\n"
         f"Username: {uname}\n"
@@ -1001,8 +1001,8 @@ async def _render_admin_user_card(cb: CallbackQuery, tenant: Tenant, uid: int):
             InlineKeyboardButton(text="💳 Депозит", callback_data=f"adm:vip:do:dep:{uid}"),
         ],
         [
-            InlineKeyboardButton(text="👑 Вкл VIP (ENV)", callback_data=f"adm:vip:env_on:{uid}"),
-            InlineKeyboardButton(text="❌ Выкл VIP", callback_data=f"adm:vip:env_off:{uid}"),
+            InlineKeyboardButton(text="👑 ВКЛ PLATINUM", callback_data=f"adm:vip:env_on:{uid}"),
+            InlineKeyboardButton(text="❌ ВЫКЛ PLATINUM", callback_data=f"adm:vip:env_off:{uid}"),
         ],
         [
             InlineKeyboardButton(text="⬅️ К списку рефов", callback_data="adm:users"),
@@ -1296,7 +1296,7 @@ async def run_child_bot(tenant: Tenant):
         # ----- Главное меню
         if data == "adm:menu":
             await state.clear()
-            await _safe_edit_msg(cb, "<b>Админ-панель v2</b>", kb_admin_main())
+            await _safe_edit_msg(cb, "<b>Панель администратора</b>", kb_admin_main())
             await cb.answer(); return
 
         # ----- People Hub (пользователи)

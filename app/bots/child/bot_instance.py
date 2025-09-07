@@ -21,8 +21,9 @@ from app.models import Tenant, User, UserStep, TenantText, TenantConfig, Postbac
 from app.db import SessionLocal
 from app.settings import settings
 from app.utils.common import safe_delete_message
-from math import ceil
+
 from pathlib import Path
+from math import ceil  # ⬅️ для пагинации
 
 # ---------------------- ЭКРАНЫ / КЛЮЧИ ----------------------
 KEYS: List[Tuple[str, dict]] = [
@@ -46,24 +47,14 @@ KEYS: List[Tuple[str, dict]] = [
     ("btn_get_signal",    {"ru": "Кнопка: Получить сигнал","en": "Button: Get signal", "hi": "बटन: सिग्नल प्राप्त करें", "es": "Botón: Obtener señal"}),
     ("btn_support",       {"ru": "Кнопка: Поддержка",      "en": "Button: Support", "hi": "บटन: समर्थन", "es": "Botón: Soporte"}),
     ("btn_change_lang",   {"ru": "Кнопка: Сменить язык",   "en": "Button: Change language", "hi": "बटन: भाषा बदलें", "es": "Botón: Cambiar idioma"}),
-    ("btn_go_channel",    {"ru": "Кнопка: Перейти в канал","en": "Button: Go to channel", "hi": "बटन: चैनल पर जाएं", "es": "Botón: Ir al canal"}),
+    ("btn_go_channel",    {"ru": "Кнопка: Перейти в канал","en": "Button: Go to channel", "hi": "बटन: चैनल पर जाएँ", "es": "Botón: Ir al canal"}),
     ("btn_ive_subscribed",{"ru": "Кнопка: Я подписался",   "en": "Button: I've subscribed", "hi": "बटन: मैंने सदस्यता ली", "es": "Botón: Ya me suscribí"}),
 ]
 
 # ---------------------- ДЕФОЛТНЫЕ ТЕКСТЫ ----------------------
 DEFAULT_TEXTS = {
-    "lang": {
-        "ru": "Выберите язык",
-        "en": "Choose your language",
-        "hi": "भाषा चुनें",
-        "es": "Elige tu idioma",
-    },
-    "main": {
-        "ru": "Главное меню",
-        "en": "Main menu",
-        "hi": "मुख्य मेनू",
-        "es": "Menú principal",
-    },
+    "lang": {"ru": "Выберите язык", "en": "Choose your language", "hi": "भाषा चुनें", "es": "Elige tu idioma"},
+    "main": {"ru": "Главное меню", "en": "Main menu", "hi": "मुख्य मेनू", "es": "Menú principal"},
     "guide": {
         "ru": (
             "1. Зарегистрируйте аккаунт на брокере {{ref}}, обязательно через нашего бота, "
@@ -97,40 +88,9 @@ DEFAULT_TEXTS = {
             "try to pick higher probability entries.\n"
             "12. Earn a profit."
         ),
-        "hi": (
-            "1. ब्रोकर {{ref}} पर खाता हमारे बॉट के माध्यम से पंजीकृत करें, "
-            "इसके लिए /start > सिग्नल प्राप्त करें > पंजीकरण पर जाएँ।\n"
-            "2. पंजीकरण का स्वतः सत्यापन होने दें — बॉट आपको सूचित करेगा।\n"
-            "3. सफल सत्यापन के बाद /start > सिग्नल प्राप्त करें > जमा करें से डिपॉज़िट करें।\n"
-            "4. डिपॉज़िट का स्वतः सत्यापन होने दें — बॉट आपको सूचित करेगा।\n"
-            "5. “सिग्नल प्राप्त करें” दबाएँ।\n"
-            "6. बॉट इंटरफ़ेस की पहली पंक्ति में ट्रेडिंग इंस्ट्रूमेंट चुनें।\n"
-            "7. उसी इंस्ट्रूमेंट को {{ref}} पर भी चुनें (डुप्लिकेट करें)।\n"
-            "8. ट्रेडिंग मॉडल चुनें: सामान्य यूज़र्स के लिए TESSA Plus, प्लैटिनम यूज़र्स के लिए TESSA Quantum।\n"
-            "9. कोई भी एक्सपायरी समय चुनें।\n"
-            "10. वही एक्सपायरी समय {{ref}} पर भी सेट करें।\n"
-            "11. “सिग्नल जेनरेट करें” दबाएँ और बॉट की एनालिटिक्स के अनुसार ही ट्रेड करें, "
-            "उच्च संभावना वाले एंट्रीज़ चुनने की कोशिश करें।\n"
-            "12. लाभ कमाएँ।"
-        ),
-        "es": (
-            "1. Registra una cuenta en el bróker {{ref}} utilizando nuestro bot, "
-            "ve a /start > Obtener señal > Registrarse\n"
-            "2. Espera la verificación automática del registro; el bot te avisará.\n"
-            "3. Tras la verificación, realiza un depósito desde /start > Obtener señal > Hacer depósito\n"
-            "4. Espera la verificación automática del depósito; el bot te avisará.\n"
-            "5. Pulsa “Obtener señal”.\n"
-            "6. Elige un instrumento de trading en la primera línea de la interfaz del bot.\n"
-            "7. Duplica ese instrumento en {{ref}}.\n"
-            "8. Elige el modelo de trading: TESSA Plus para usuarios normales, TESSA Quantum para usuarios platinum.\n"
-            "9. Selecciona cualquier tiempo de expiración.\n"
-            "10. Duplica el mismo tiempo de expiración en {{ref}}.\n"
-            "11. Pulsa “Generar señal” y opera estrictamente según la analítica del bot, "
-            "intenta seleccionar entradas de mayor probabilidad.\n"
-            "12. Obtén beneficios."
-        ),
+        "hi": (...),
+        "es": (...),
     },
-
     "subscribe": {
         "ru": "Для начала подпишитесь на канал.\n\nПосле подписки вернитесь в бот.",
         "en": "First, subscribe to the channel.\n\nAfter subscribing, return to the bot.",
@@ -155,78 +115,18 @@ DEFAULT_TEXTS = {
         "hi": "🎉 एक्सेस मिल गया। “सिग्नल प्राप्त करें” दबाएँ।",
         "es": "🎉 Acceso concedido. Pulsa “Obtener señal”.",
     },
-
-    # --- Кнопки (дефолтные подписи)
-    "btn_main": {
-        "ru": "🏠 Главное меню", "en": "🏠 Main menu", "hi": "🏠 मुख्य मेनू", "es": "🏠 Menú principal"
-    },
-    "btn_instruction": {
-        "ru": "📘 Инструкция", "en": "📘 Instruction", "hi": "📘 निर्देश", "es": "📘 Instrucciones"
-    },
-    "btn_get_signal": {
-        "ru": "📈 Получить сигнал", "en": "📈 Get signal", "hi": "📈 सिग्नल प्राप्त करें", "es": "📈 Obtener señal"
-    },
-    "btn_support": {
-        "ru": "🆘 Поддержка", "en": "🆘 Support", "hi": "🆘 समर्थन", "es": "🆘 Soporte"
-    },
-    "btn_change_lang": {
-        "ru": "🌐 Сменить язык", "en": "🌐 Change language", "hi": "🌐 भाषा बदलें", "es": "🌐 Cambiar idioma"
-    },
-    "btn_go_channel": {
-        "ru": "🚀 Перейти в канал", "en": "🚀 Go to channel", "hi": "🚀 चैनल पर जाएँ", "es": "🚀 Ir al canal"
-    },
-    "btn_ive_subscribed": {
-        "ru": "✅ Я подписался", "en": "✅ I've subscribed", "hi": "✅ मैंने सदस्यता ली", "es": "✅ Ya me suscribí"
-    },
-
-    # Ярлыки языков (то, как они показываются в меню выбора языка)
-    "lang_label_ru": {
-        "ru": "🇷🇺 Русский", "en": "🇷🇺 Russian", "hi": "🇷🇺 रूसी", "es": "🇷🇺 Ruso"
-    },
-    "lang_label_en": {
-        "ru": "🇬🇧 Английский", "en": "🇬🇧 English", "hi": "🇬🇧 अंग्रेज़ी", "es": "🇬🇧 Inglés"
-    },
-    "lang_label_hi": {
-        "ru": "🇮🇳 Хинди", "en": "🇮🇳 Hindi", "hi": "🇮🇳 हिन्दी", "es": "🇮🇳 Hindi"
-    },
-    "lang_label_es": {
-        "ru": "🇪🇸 Испанский", "en": "🇪🇸 Spanish", "hi": "🇪🇸 स्पेनिश", "es": "🇪🇸 Español"
-    },
-
+    "btn_main": {"ru": "🏠 Главное меню", "en": "🏠 Main menu", "hi": "🏠 मुख्य मेनू", "es": "🏠 Menú principal"},
+    "btn_instruction": {"ru": "📘 Инструкция", "en": "📘 Instruction", "hi": "📘 निर्देश", "es": "📘 Instrucciones"},
+    "btn_get_signal": {"ru": "📈 Получить сигнал", "en": "📈 Get signal", "hi": "📈 सिग्नल प्राप्त करें", "es": "📈 Obtener señal"},
+    "btn_support": {"ru": "🆘 Поддержка", "en": "🆘 Support", "hi": "🆘 समर्थन", "es": "🆘 Soporte"},
+    "btn_change_lang": {"ru": "🌐 Сменить язык", "en": "🌐 Change language", "hi": "🌐 भाषा बदलें", "es": "🌐 Cambiar idioma"},
+    "btn_go_channel": {"ru": "🚀 Перейти в канал", "en": "🚀 Go to channel", "hi": "🚀 चैनल पर जाएँ", "es": "🚀 Ir al canal"},
+    "btn_ive_subscribed": {"ru": "✅ Я подписался", "en": "✅ I've subscribed", "hi": "✅ मैंने सदस्यता ली", "es": "✅ Ya me suscribí"},
+    "lang_label_ru": {"ru": "🇷🇺 Русский", "en": "🇷🇺 Russian", "hi": "🇷🇺 रूसी", "es": "🇷🇺 Ruso"},
+    "lang_label_en": {"ru": "🇬🇧 Английский", "en": "🇬🇧 English", "hi": "🇬🇧 अंग्रेज़ी", "es": "🇬🇧 Inglés"},
+    "lang_label_hi": {"ru": "🇮🇳 Хинди", "en": "🇮🇳 Hindi", "hi": "🇮🇳 हिन्दी", "es": "🇮🇳 Hindi"},
+    "lang_label_es": {"ru": "🇪🇸 Испанский", "en": "🇪🇸 Spanish", "hi": "🇪🇸 स्पेनिश", "es": "🇪🇸 Español"},
 }
-
-def _vip_list_build_rows(cands, page: int, page_cb_prefix: str):
-    pages = max(1, ceil(len(cands) / USERS_PER_PAGE))
-    start = (page - 1) * USERS_PER_PAGE
-    chunk = cands[start:start + USERS_PER_PAGE]
-    rows = [[InlineKeyboardButton(text=f"{flag} {tg_id} — ${total}", callback_data="adm:noop")] for tg_id, total, flag in chunk]
-
-    nav = []
-    if page > 1:
-        nav.append(InlineKeyboardButton(text="« Назад", callback_data=f"{page_cb_prefix}:{page-1}"))
-    nav.append(InlineKeyboardButton(text=f"Стр. {page}/{pages}", callback_data="adm:noop"))
-    if page < pages:
-        nav.append(InlineKeyboardButton(text="Вперёд »", callback_data=f"{page_cb_prefix}:{page+1}"))
-    if nav:
-        rows.append(nav)
-    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip")])
-    return rows, pages
-
-def _vip_pick_user_rows(user_ids, page: int, page_cb_prefix: str, action_prefix: str):
-    pages = max(1, ceil(len(user_ids) / USERS_PER_PAGE))
-    start = (page - 1) * USERS_PER_PAGE
-    chunk = user_ids[start:start + USERS_PER_PAGE]
-    rows = [[InlineKeyboardButton(text=str(uid), callback_data=f"{action_prefix}:{uid}")] for uid in chunk]
-    nav = []
-    if page > 1:
-        nav.append(InlineKeyboardButton(text="« Назад", callback_data=f"{page_cb_prefix}:{page-1}"))
-    nav.append(InlineKeyboardButton(text=f"Стр. {page}/{pages}", callback_data="adm:noop"))
-    if page < pages:
-        nav.append(InlineKeyboardButton(text="Вперёд »", callback_data=f"{page_cb_prefix}:{page+1}"))
-    if nav: rows.append(nav)
-    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip")])
-    return rows
-
 
 def apply_placeholders(text: str, tenant: Tenant) -> str:
     ref = (getattr(tenant, "ref_link", None) or "").strip()
@@ -237,21 +137,17 @@ def apply_placeholders(text: str, tenant: Tenant) -> str:
             return text.replace("{{ref}}", "PocketOption")
     return text
 
-
 def key_title(key: str, locale: str) -> str:
     for k, names in KEYS:
         if k == key:
             return names.get(locale, k)
     return key
 
-
 def default_text(key: str, locale: str) -> str:
     return DEFAULT_TEXTS.get(key, {}).get(locale) or DEFAULT_TEXTS.get(key, {}).get("en", key)
 
-
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
-
 
 def _find_stock_file(key: str, locale: str) -> Optional[Path]:
     """
@@ -291,7 +187,6 @@ async def _safe_edit_msg(cb: CallbackQuery, text: str, kb=None):
         pass
 
 async def _try_username(bot: Bot, uid: int) -> str:
-    # Ленивая попытка получить username (на странице 10 штук — норм)
     try:
         chat = await bot.get_chat(uid)
         if getattr(chat, "username", None):
@@ -299,7 +194,6 @@ async def _try_username(bot: Bot, uid: int) -> str:
     except Exception:
         pass
     return "—"
-
 # ---------------------- ПОДПИСКА (fixed) ----------------------
 def parse_channel_field(raw: str) -> tuple[Optional[Union[int, str]], Optional[str]]:
     """
@@ -314,7 +208,6 @@ def parse_channel_field(raw: str) -> tuple[Optional[Union[int, str]], Optional[s
     if not raw:
         return None, None
 
-    # чистим невидимые/мусорные символы
     raw = "".join(ch for ch in raw.strip() if ch.isprintable())
 
     if "|" in raw:
@@ -348,23 +241,16 @@ def parse_channel_field(raw: str) -> tuple[Optional[Union[int, str]], Optional[s
 
     return ident, url
 
-
 async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
-    """
-    Строгая, но более устойчивая проверка:
-    - приватный канал: ID '-100...' приводим к int;
-    - публичный: пробуем '@name' и 'name' (без @);
-    - Forbidden/BadRequest -> False, но логируем причину для диагностики.
-    """
     ident, _ = parse_channel_field(channel_url or "")
     if not ident:
-        return True  # не задан канал — не блокируем
+        return True
 
     chat_id = ident
     try:
         s = ident.strip()
         if s.startswith("-100") and s[1:].isdigit():
-            chat_id = int(s)  # приватка: int работает стабильнее
+            chat_id = int(s)
     except Exception:
         pass
 
@@ -372,10 +258,7 @@ async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
         m = await bot.get_chat_member(chat_id, user_id)
         status = getattr(m, "status", None)
         return status in ("member", "administrator", "creator", "restricted")
-
     except TelegramBadRequest as e:
-        msg = str(e).lower()
-        # иногда '@name' срабатывает без '@'
         if isinstance(chat_id, str) and chat_id.startswith("@"):
             try:
                 m = await bot.get_chat_member(chat_id[1:], user_id)
@@ -385,17 +268,12 @@ async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
                 pass
         print(f"[subscribe-check][badrequest] ident={ident} uid={user_id} err={e}")
         return False
-
     except TelegramForbiddenError as e:
         print(f"[subscribe-check][forbidden] ident={ident} uid={user_id} err={e}")
         return False
-
     except Exception as e:
         print(f"[subscribe-check][unexpected] ident={ident} uid={user_id} err={e!r}")
         return False
-
-
-
 
 # ---------------------- УТИЛЫ ДЛЯ СВЕЖИХ ДАННЫХ ----------------------
 def tget(db, tenant_id: int, key: str, locale: str, fallback_text: str):
@@ -406,11 +284,9 @@ def tget(db, tenant_id: int, key: str, locale: str, fallback_text: str):
     ).first()
     return (tt.text if tt and tt.text else fallback_text), (tt.image_file_id if tt else None)
 
-
 def tget_label(db, tenant_id: int, key: str, locale: str) -> str:
     txt, _ = tget(db, tenant_id, key, locale, default_text(key, locale))
     return txt
-
 
 def get_cfg(db: SessionLocal, tenant_id: int) -> TenantConfig:
     cfg = db.query(TenantConfig).filter(TenantConfig.tenant_id == tenant_id).first()
@@ -433,10 +309,8 @@ def get_cfg(db: SessionLocal, tenant_id: int) -> TenantConfig:
         db.commit(); db.refresh(cfg)
     return cfg
 
-
 def get_fresh_tenant(db: SessionLocal, tenant_id: int) -> Tenant:
     return db.query(Tenant).filter(Tenant.id == tenant_id).first()
-
 
 def get_deposit_total(db, tenant_id: int, user: User) -> int:
     total = db.query(func.coalesce(func.sum(Postback.sum), 0)).filter(
@@ -447,14 +321,9 @@ def get_deposit_total(db, tenant_id: int, user: User) -> int:
     ).scalar() or 0
     return int(total)
 
-
-# -------------------------- ОТПРАВКА ЭКРАНА (авто-удаление) --------------------------
+# -------------------------- ОТПРАВКА ЭКРАНА --------------------------
 async def send_screen(bot: Bot, user: User, key: str, locale: str, text: str,
                       kb: Optional[InlineKeyboardMarkup], image_file_id: Optional[str]):
-    """
-    Централизованно удаляем предыдущее сообщение пользователя (если есть),
-    отправляем новый экран (с фото/стоком/текст).
-    """
     await safe_delete_message(bot, user.tg_user_id, getattr(user, "last_message_id", None))
 
     if image_file_id:
@@ -479,7 +348,6 @@ async def send_screen(bot: Bot, user: User, key: str, locale: str, text: str,
     m = await bot.send_message(user.tg_user_id, text, reply_markup=kb)
     user.last_message_id = m.message_id
 
-
 # -------------------------- URL МИНИ-АППЫ --------------------------
 def tenant_miniapp_url(tenant: Tenant, user: User) -> str:
     if getattr(user, "vip_miniapp_url", None):
@@ -495,7 +363,6 @@ def tenant_miniapp_url(tenant: Tenant, user: User) -> str:
     base = (tenant.miniapp_url or settings.miniapp_url).rstrip("/")
     return f"{base}?tenant_id={tenant.id}&uid={user.tg_user_id}"
 
-
 # ------------------------------- КНОПКИ -------------------------------
 def _normalize_support_url(u: Optional[str]) -> Optional[str]:
     if not u:
@@ -510,8 +377,6 @@ def _normalize_support_url(u: Optional[str]) -> Optional[str]:
     if u.startswith("t.me/") or "t.me/" in u:
         return "https://" + u.lstrip("/")
     return None
-
-
 def kb_main_with_labels(locale: str, support_url: Optional[str], tenant: Tenant, user: User, has_access: bool,
                         btn_instruction: str, btn_support: str, btn_change_lang: str, btn_get_signal: str):
     # Если доступ есть — сразу WebApp; иначе ведём по шагам
@@ -535,20 +400,12 @@ def kb_main_with_labels(locale: str, support_url: Optional[str], tenant: Tenant,
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
 def kb_back_text(btn_main_text: str):
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=btn_main_text, callback_data="menu:main")]])
 
-
 def kb_lang(current: Optional[str], btn_main_text: str):
-    # Берём текущую локаль для подписей
-    # Вызов kb_lang идёт из render_lang_screen, который вычисляет locale сам.
-    # Здесь нам достаточно того, что tget_label будет вызван из render_lang_screen напрямую — упрощаем:
-    # Мы не имеем db здесь, поэтому проще сформировать кнопки в render_lang_screen.
-    # → Оставим заглушку: она будет заменена на построение внутри render_lang_screen.
+    # Теперь строим в render_lang_screen
     raise RuntimeError("kb_lang is built inside render_lang_screen now")
-
-
 
 def kb_subscribe(locale: str, channel_url: str,
                  btn_go_channel: str, btn_ive_subscribed: str, btn_main_text: str) -> InlineKeyboardMarkup:
@@ -563,18 +420,13 @@ def kb_subscribe(locale: str, channel_url: str,
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
 # --------------------------- РЕНДЕР ЭКРАНОВ: UI ---------------------------
 async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang: Optional[str]):
-    """
-    Первый запуск: показываем выбор языка.
-    Все последующие /start при уже заданном user.lang → сразу главное меню (не язык).
-    """
     db = SessionLocal()
     try:
         tenant = get_fresh_tenant(db, tenant.id) or tenant
 
-        # локаль экрана (в каком языке показывать текст и подписи)
+        # локаль экрана
         locale = (current_lang or tenant.lang_default or "ru").lower()
 
         # Текст/картинка экрана
@@ -583,19 +435,18 @@ async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang:
         # Текст кнопки "Главное меню"
         btn_main = tget_label(db, tenant.id, "btn_main", locale)
 
-        # Подписи языков (кастомизируемые через Контент)
+        # Ярлыки языков (кастомизируемые)
         label_ru = tget_label(db, tenant.id, "lang_label_ru", locale)
         label_en = tget_label(db, tenant.id, "lang_label_en", locale)
         label_hi = tget_label(db, tenant.id, "lang_label_hi", locale)
         label_es = tget_label(db, tenant.id, "lang_label_es", locale)
 
-        # Отмечаем текущий выбранный язык галочкой (если есть)
+        # Галочки
         ru = ("✅ " if current_lang == "ru" else "") + label_ru
         en = ("✅ " if current_lang == "en" else "") + label_en
         hi = ("✅ " if current_lang == "hi" else "") + label_hi
         es = ("✅ " if current_lang == "es" else "") + label_es
 
-        # Собираем клавиатуру прямо тут (без kb_lang)
         rm = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=ru, callback_data="lang:ru"),
              InlineKeyboardButton(text=en, callback_data="lang:en")],
@@ -604,13 +455,10 @@ async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang:
             [InlineKeyboardButton(text=btn_main, callback_data="menu:main")],
         ])
 
-        # Показываем экран (send_screen сам удалит предыдущее сообщение)
         await send_screen(bot, user, "lang", locale, text, rm, img)
         db.commit()
     finally:
         db.close()
-
-
 
 async def render_main(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
@@ -639,7 +487,6 @@ async def render_main(bot: Bot, tenant: Tenant, user: User):
     finally:
         db.close()
 
-
 async def render_guide(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
     try:
@@ -652,7 +499,6 @@ async def render_guide(bot: Bot, tenant: Tenant, user: User):
         db.commit()
     finally:
         db.close()
-
 
 async def render_subscribe(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
@@ -671,14 +517,7 @@ async def render_subscribe(bot: Bot, tenant: Tenant, user: User):
     finally:
         db.close()
 
-
 async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool = False):
-    """
-    Экран «Получить сигнал»:
-    - последовательность: подписка (если включена) → регистрация (если step=new/asked_reg) → депозит (если включен)
-    - доступ открыт: один раз показываем «unlocked», потом — просто главное меню (а кнопка ведёт в мини-апп).
-    - VIP уведомление при достижении порога: удаляем предыдущее сообщение и отправляем уведомление (единожды), затем выходим.
-    """
     db = SessionLocal()
     try:
         tenant = get_fresh_tenant(db, tenant.id) or tenant
@@ -693,7 +532,7 @@ async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool 
                 db.commit()
                 return
 
-        # VIP-инфо по порогу (уведомляем один раз, чисто)
+        # VIP-инфо при пороге (один раз)
         try:
             dep_total = get_deposit_total(db, tenant.id, user)
             thr = int(getattr(cfg, "vip_threshold", 500) or 500)
@@ -703,11 +542,9 @@ async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool 
                     if locale == "ru" else
                     "🎉 Congrats! You’re eligible for the premium bot. Please contact support to get access."
                 )
-
-                # удаляем прошлое сообщение и отправляем уведомление (сохраняем last_message_id)
                 await safe_delete_message(bot, user.tg_user_id, getattr(user, "last_message_id", None))
                 kb_support = None
-                fresh_tenant = tenant  # уже свежий
+                fresh_tenant = tenant
                 if fresh_tenant.support_url:
                     kb_support = InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(text=("🆘 Поддержка" if locale == "ru" else "🆘 Support"),
@@ -717,11 +554,11 @@ async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool 
                 user.last_message_id = m.message_id
                 user.vip_notified = True
                 db.commit()
-                return  # показываем только это уведомление, без дополнительного экрана сейчас
+                return
         except Exception as e:
             print(f"[vip-notify] {e}")
 
-        # Доступ разрешён?
+        # Доступ?
         access = (user.step == UserStep.deposited) or (not cfg.require_deposit and user.step >= UserStep.registered)
         if force_unlocked or access:
             if not getattr(user, "access_notified", False):
@@ -744,7 +581,6 @@ async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool 
                 db.commit()
                 return
 
-            # Уже уведомляли — просто главное меню (кнопка «Получить сигнал» теперь открывает мини-апп)
             await render_main(bot, tenant, user)
             db.commit()
             return
@@ -766,7 +602,7 @@ async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool 
             db.commit()
             return
 
-        # Шаг 2 — Депозит (если обязателен)
+        # Шаг 2 — Депозит
         text, img = tget(db, tenant.id, "step2", locale, default_text("step2", locale))
         dep_total = get_deposit_total(db, tenant.id, user)
         left = 0
@@ -821,7 +657,6 @@ class TenantGate(BaseMiddleware):
             print(f"[TenantGate] error: {e}")
         return await handler(event, data)
 
-
 # --------------------------------- ADMIN FSM ---------------------------------
 class AdminForm(StatesGroup):
     waiting_support = State()
@@ -847,6 +682,9 @@ class AdminForm(StatesGroup):
 
     params_wait_min_dep = State()
 
+    # NEW: поиск пользователей (TG ID / @username / Trader ID)
+    users_search_query = State()
+
 # Какие кнопки относятся к какому экрану (для удобного редактирования)
 SCREEN_BUTTONS = {
     "lang": ["btn_main", "lang_label_ru", "lang_label_en", "lang_label_hi", "lang_label_es"],
@@ -860,126 +698,117 @@ SCREEN_BUTTONS = {
 
 # ----------------------------- АДМИН КНОПКИ/МЕНЮ -----------------------------
 def kb_admin_main():
+    # та же логика, но компактно в 2 колонки
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🔗 Ссылки", callback_data="adm:links")],
-            [InlineKeyboardButton(text="🔁 Постбэки", callback_data="adm:pb")],
-            [InlineKeyboardButton(text="🧩 Контент", callback_data="adm:content")],
-            [InlineKeyboardButton(text="⚙️ Параметры", callback_data="adm:params")],
-            [InlineKeyboardButton(text="👑 PLATINUM", callback_data="adm:vip")],
-            [InlineKeyboardButton(text="📣 Рассылка", callback_data="adm:broadcast")],
-            [InlineKeyboardButton(text="👥 Ваши рефы", callback_data="adm:users")],
-            [InlineKeyboardButton(text="📊 Статистика", callback_data="adm:stats")],
+            [InlineKeyboardButton(text="🔗 Ссылки", callback_data="adm:links"),
+             InlineKeyboardButton(text="🔁 Постбэки", callback_data="adm:pb")],
+            [InlineKeyboardButton(text="🧩 Контент", callback_data="adm:content"),
+             InlineKeyboardButton(text="⚙️ Параметры", callback_data="adm:params")],
+            [InlineKeyboardButton(text="👑 PLATINUM", callback_data="adm:vip"),
+             InlineKeyboardButton(text="📣 Рассылка", callback_data="adm:broadcast")],
+            [InlineKeyboardButton(text="👥 Ваши рефы", callback_data="adm:users"),
+             InlineKeyboardButton(text="📊 Статистика", callback_data="adm:stats")],
         ]
     )
-
 
 def kb_admin_links():
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✏️ Изменить Support URL", callback_data="adm:set:support")],
-            [InlineKeyboardButton(text="✏️ Изменить Реф. ссылку", callback_data="adm:set:ref")],
-            [InlineKeyboardButton(text="✏️ Изменить ссылку депозита", callback_data="adm:set:dep")],
-            [InlineKeyboardButton(text="✏️ Изменить Web-app URL", callback_data="adm:set:miniapp")],
+            [InlineKeyboardButton(text="✏️ Изменить Support URL", callback_data="adm:set:support"),
+             InlineKeyboardButton(text="✏️ Изменить Реф. ссылку", callback_data="adm:set:ref")],
+            [InlineKeyboardButton(text="✏️ Изменить ссылку депозита", callback_data="adm:set:dep"),
+             InlineKeyboardButton(text="✏️ Изменить Web-app URL", callback_data="adm:set:miniapp")],
             [InlineKeyboardButton(text="✏️ Изменить ссылку канала", callback_data="adm:set:channel")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:menu")],
         ]
     )
 
-
 def kb_content_lang():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🇷🇺 RU", callback_data="adm:cl:ru"),
-             InlineKeyboardButton(text="🇬🇧 EN", callback_data="adm:cl:en")],
-            [InlineKeyboardButton(text="🇮🇳 HI", callback_data="adm:cl:hi"),
+             InlineKeyboardButton(text="🇬🇧 EN", callback_data="adm:cl:en"),
+             InlineKeyboardButton(text="🇮🇳 HI", callback_data="adm:cl:hi"),
              InlineKeyboardButton(text="🇪🇸 ES", callback_data="adm:cl:es")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:menu")],
         ]
     )
 
-
 def kb_content_keys(locale: str):
     # Показываем только экраны (без отдельных кнопок)
     screen_keys = ["lang", "main", "guide", "subscribe", "step1", "step2", "unlocked"]
-    rows = [
-        [InlineKeyboardButton(text=f"• {key_title(k, locale)}", callback_data=f"adm:cks:{k}:{locale}")]
-        for k in screen_keys
-    ]
+    rows = []
+    # две колонки
+    for i in range(0, len(screen_keys), 2):
+        left = screen_keys[i]
+        right = screen_keys[i+1] if i+1 < len(screen_keys) else None
+        row = [InlineKeyboardButton(text=f"• {key_title(left, locale)}", callback_data=f"adm:cks:{left}:{locale}")]
+        if right:
+            row.append(InlineKeyboardButton(text=f"• {key_title(right, locale)}", callback_data=f"adm:cks:{right}:{locale}"))
+        rows.append(row)
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:content")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
 
 def kb_content_edit(key: str, locale: str):
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📝 Изменить текст", callback_data=f"adm:ce:text:{key}:{locale}")],
-            [InlineKeyboardButton(text="🖼 Изменить картинку", callback_data=f"adm:ce:photo:{key}:{locale}")],
-            [InlineKeyboardButton(text="🗑 Удалить картинку", callback_data=f"adm:ce:delphoto:{key}:{locale}")],
-            [InlineKeyboardButton(text="🔄 Сбросить", callback_data=f"adm:ce:reset:{key}:{locale}")],
+            [InlineKeyboardButton(text="📝 Изменить текст", callback_data=f"adm:ce:text:{key}:{locale}"),
+             InlineKeyboardButton(text="🖼 Изменить картинку", callback_data=f"adm:ce:photo:{key}:{locale}")],
+            [InlineKeyboardButton(text="🗑 Удалить картинку", callback_data=f"adm:ce:delphoto:{key}:{locale}"),
+             InlineKeyboardButton(text="🔄 Сбросить", callback_data=f"adm:ce:reset:{key}:{locale}")],
             [InlineKeyboardButton(text="👀 Предпросмотр", callback_data=f"adm:ce:preview:{key}:{locale}")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:content")],
         ]
     )
 
 def kb_content_screen(key: str, locale: str):
-    # Кнопки редактирования самого экрана
     rows = [
-        [InlineKeyboardButton(text="📝 Изменить текст экрана", callback_data=f"adm:ce:text:{key}:{locale}")],
-        [InlineKeyboardButton(text="🖼 Изменить картинку экрана", callback_data=f"adm:ce:photo:{key}:{locale}")],
-        [InlineKeyboardButton(text="🗑 Удалить картинку экрана", callback_data=f"adm:ce:delphoto:{key}:{locale}")],
-        [InlineKeyboardButton(text="🔄 Сбросить экран к дефолту", callback_data=f"adm:ce:reset:{key}:{locale}")],
+        [InlineKeyboardButton(text="📝 Текст экрана", callback_data=f"adm:ce:text:{key}:{locale}"),
+         InlineKeyboardButton(text="🖼 Картинка экрана", callback_data=f"adm:ce:photo:{key}:{locale}")],
+        [InlineKeyboardButton(text="🗑 Удалить картинку", callback_data=f"adm:ce:delphoto:{key}:{locale}"),
+         InlineKeyboardButton(text="🔄 Сбросить к дефолту", callback_data=f"adm:ce:reset:{key}:{locale}")],
         [InlineKeyboardButton(text="👀 Предпросмотр экрана", callback_data=f"adm:ce:preview:{key}:{locale}")],
     ]
-
     # Раздел кнопок этого экрана
     btns = SCREEN_BUTTONS.get(key, [])
     if btns:
-        rows.append([InlineKeyboardButton(text="—", callback_data="adm:noop")])  # разделитель
-        for bkey in btns:
-            rows.append([InlineKeyboardButton(text=f"🔤 Текст кнопки: {key_title(bkey, locale)}",
-                                              callback_data=f"adm:ce:text:{bkey}:{locale}")])
-
+        rows.append([InlineKeyboardButton(text="—", callback_data="adm:noop")])
+        two_cols = []
+        for i, bkey in enumerate(btns, 1):
+            two_cols.append(InlineKeyboardButton(text=f"🔤 Текст: {key_title(bkey, locale)}",
+                                                 callback_data=f"adm:ce:text:{bkey}:{locale}"))
+            if i % 2 == 0 or i == len(btns):
+                rows.append(two_cols); two_cols = []
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"adm:cl:{locale}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
 
 def kb_params(cfg: TenantConfig):
     req_sub = bool(getattr(cfg, "require_subscription", False))
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=("✅ Проверять подписку" if req_sub else "❌ Не проверять подписку"),
-                    callback_data="adm:param:toggle_sub",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=("✅ Проверять депозит" if cfg.require_deposit else "❌ Не проверять депозит"),
-                    callback_data="adm:param:toggle_dep",
-                )
-            ],
+            [InlineKeyboardButton(
+                text=("✅ Проверять подписку" if req_sub else "❌ Не проверять подписку"),
+                callback_data="adm:param:toggle_sub")],
+            [InlineKeyboardButton(
+                text=("✅ Проверять депозит" if cfg.require_deposit else "❌ Не проверять депозит"),
+                callback_data="adm:param:toggle_dep")],
             [InlineKeyboardButton(text=f"💵 Минимальный депозит: ${cfg.min_deposit}",
-                                  callback_data="adm:param:set_min")],
-            [InlineKeyboardButton(text="↩️ Вернуть стоковую Web-app", callback_data="adm:param:stock_miniapp")],
+                                  callback_data="adm:param:set_min"),
+             InlineKeyboardButton(text="↩️ Стоковая Web-app", callback_data="adm:param:stock_miniapp")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:menu")],
         ]
     )
-
 
 def kb_broadcast_segments():
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="👥 Все пользователи", callback_data="adm:bs:all")],
-            [InlineKeyboardButton(text="📝 Только зарегистрированные", callback_data="adm:bs:registered")],
+            [InlineKeyboardButton(text="👥 Все пользователи", callback_data="adm:bs:all"),
+             InlineKeyboardButton(text="📝 Зарегистрированные", callback_data="adm:bs:registered")],
             [InlineKeyboardButton(text="💰 С депозитом", callback_data="adm:bs:deposited")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:menu")],
         ]
     )
-
-
 
 def editor_status_text(db, tenant_id: int, key: str, lang: str) -> str:
     tt = db.query(TenantText).filter(
@@ -992,6 +821,27 @@ def editor_status_text(db, tenant_id: int, key: str, lang: str) -> str:
         f"Текст: {text_len} символ(ов)\n"
         f"Картинка: {'есть' if has_img else 'нет'}"
     )
+
+# --------- VIP список: пагинация 10/стр с «влево/вправо» ----------
+def _vip_list_build_rows(cands, page: int, page_cb_prefix: str):
+    pages = max(1, ceil(len(cands) / USERS_PER_PAGE))
+    if page < 1: page = 1
+    if page > pages: page = pages
+    start = (page - 1) * USERS_PER_PAGE
+    chunk = cands[start:start + USERS_PER_PAGE]
+    rows = [[InlineKeyboardButton(text=f"{flag} {tg_id} — ${total}", callback_data="adm:noop")]
+            for tg_id, total, flag in chunk]
+
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton(text="« Назад", callback_data=f"{page_cb_prefix}:{page-1}"))
+    nav.append(InlineKeyboardButton(text=f"Стр. {page}/{pages}", callback_data="adm:noop"))
+    if page < pages:
+        nav.append(InlineKeyboardButton(text="Вперёд »", callback_data=f"{page_cb_prefix}:{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip")])
+    return rows, pages
 # ---------------------------- ЗАПУСК ДЕТСКОГО БОТА ----------------------------
 async def run_child_bot(tenant: Tenant):
     bot = Bot(token=tenant.child_bot_token, default=DefaultBotProperties(parse_mode="HTML"))
@@ -1030,10 +880,8 @@ async def run_child_bot(tenant: Tenant):
                         User.tg_user_id == msg.from_user.id
                     ).first()
 
-            # Правило: первый запуск → экран языка; все последующие /start → только главное меню
             if user.lang:
-                await render_main(bot, tenant, user)
-                return
+                await render_main(bot, tenant, user); return
 
             await render_lang_screen(bot, tenant, user, current_lang=None)
         finally:
@@ -1048,15 +896,14 @@ async def run_child_bot(tenant: Tenant):
                 User.tg_user_id == msg.from_user.id
             ).first()
             if not user:
-                await msg.answer("user not found");
-                return
+                await msg.answer("user not found"); return
 
             t = get_fresh_tenant(db, tenant.id) or tenant
             ident, open_url = parse_channel_field(t.channel_url or "")
 
             chat_id = ident
             try:
-                if ident and ident.startswith("-100") and ident[1:].isdigit():
+                if ident and isinstance(ident, str) and ident.startswith("-100") and ident[1:].isdigit():
                     chat_id = int(ident)
             except Exception:
                 pass
@@ -1083,23 +930,17 @@ async def run_child_bot(tenant: Tenant):
     async def on_lang_select(cb: CallbackQuery):
         db = SessionLocal()
         try:
-            user = db.query(User).filter(
-                User.tenant_id == tenant.id,
-                User.tg_user_id == cb.from_user.id
-            ).first()
+            user = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == cb.from_user.id).first()
             if not user:
-                await cb.answer()
-                return
+                await cb.answer(); return
 
             locale = (cb.data or "").split(":")[1]
             if locale not in ("ru", "en", "hi", "es"):
-                await cb.answer()
-                return
+                await cb.answer(); return
 
             user.lang = locale
             db.commit()
 
-            # авто-удаляем кликнутое сообщение (чистый чат)
             with contextlib.suppress(Exception):
                 await safe_delete_message(bot, cb.from_user.id, getattr(cb.message, "message_id", None))
 
@@ -1112,13 +953,9 @@ async def run_child_bot(tenant: Tenant):
     async def on_main(cb: CallbackQuery):
         db = SessionLocal()
         try:
-            user = db.query(User).filter(
-                User.tenant_id == tenant.id,
-                User.tg_user_id == cb.from_user.id
-            ).first()
+            user = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == cb.from_user.id).first()
             if not user:
-                await cb.answer()
-                return
+                await cb.answer(); return
 
             with contextlib.suppress(Exception):
                 await safe_delete_message(bot, cb.from_user.id, getattr(cb.message, "message_id", None))
@@ -1132,14 +969,11 @@ async def run_child_bot(tenant: Tenant):
     async def on_guide(cb: CallbackQuery):
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.tenant_id == tenant.id,
-                                         User.tg_user_id == cb.from_user.id).first()
+            user = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == cb.from_user.id).first()
             if not user:
                 return
-
             with contextlib.suppress(Exception):
                 await safe_delete_message(bot, cb.from_user.id, getattr(cb.message, "message_id", None))
-
             await render_guide(bot, tenant, user)
             await cb.answer()
         finally:
@@ -1149,14 +983,11 @@ async def run_child_bot(tenant: Tenant):
     async def on_menu_lang(cb: CallbackQuery):
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.tenant_id == tenant.id,
-                                         User.tg_user_id == cb.from_user.id).first()
+            user = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == cb.from_user.id).first()
             if not user:
                 return
-
             with contextlib.suppress(Exception):
                 await safe_delete_message(bot, cb.from_user.id, getattr(cb.message, "message_id", None))
-
             await render_lang_screen(bot, tenant, user, user.lang)
             await cb.answer()
         finally:
@@ -1166,17 +997,11 @@ async def run_child_bot(tenant: Tenant):
     async def on_subcheck(cb: CallbackQuery):
         db = SessionLocal()
         try:
-            user = db.query(User).filter(
-                User.tenant_id == tenant.id,
-                User.tg_user_id == cb.from_user.id
-            ).first()
+            user = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == cb.from_user.id).first()
             if not user:
-                await cb.answer()
-                return
-
+                await cb.answer(); return
             with contextlib.suppress(Exception):
                 await safe_delete_message(bot, cb.from_user.id, getattr(cb.message, "message_id", None))
-
             await recompute_and_route(bot, tenant, user)
             await cb.answer()
         finally:
@@ -1186,17 +1011,11 @@ async def run_child_bot(tenant: Tenant):
     async def on_get(cb: CallbackQuery):
         db = SessionLocal()
         try:
-            user = db.query(User).filter(
-                User.tenant_id == tenant.id,
-                User.tg_user_id == cb.from_user.id
-            ).first()
+            user = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == cb.from_user.id).first()
             if not user:
-                await cb.answer()
-                return
-
+                await cb.answer(); return
             with contextlib.suppress(Exception):
                 await safe_delete_message(bot, cb.from_user.id, getattr(cb.message, "message_id", None))
-
             await recompute_and_route(bot, tenant, user)
             await cb.answer()
         finally:
@@ -1204,7 +1023,7 @@ async def run_child_bot(tenant: Tenant):
 
     # -------- ADMIN --------
     def owner_only(uid: int) -> bool:
-        return uid == tenant.owner_tg_id  # только владелец этого тенанта
+        return uid == tenant.owner_tg_id
 
     @r.message(Command("admin"))
     async def admin_entry(msg: Message, state: FSMContext):
@@ -1214,31 +1033,30 @@ async def run_child_bot(tenant: Tenant):
         await state.clear()
         await msg.answer("<b>Админ-панель</b>", reply_markup=kb_admin_main())
 
+    # основной роутер админки
     @r.callback_query(
         lambda c: (
-                c.data in {"adm:menu", "adm:links", "adm:pb", "adm:content", "adm:broadcast", "adm:stats", "adm:params",
-                           "adm:vip"}
-                or (c.data or "").startswith("adm:set:")
-                or ((c.data or "").startswith("adm:vip:") and not (c.data or "").startswith("adm:vip:do:"))
-                or (c.data or "").startswith("adm:bs:")
-                or (c.data or "").startswith("adm:ce:")
-                or (c.data or "").startswith("adm:ck:")
-                or (c.data or "").startswith("adm:cl:")
-                or (c.data or "").startswith("adm:param:")
-                or (c.data or "").startswith("adm:bc:")
-                or (c.data or "").startswith("adm:cks:")  # список экранов
-                or (c.data or "").startswith("adm:noop")
-                # ⬇️ добавь эти две строки
-                or (c.data or "").startswith("adm:users")
-                or (c.data or "").startswith("adm:user:")
+            c.data in {"adm:menu", "adm:links", "adm:pb", "adm:content", "adm:broadcast", "adm:stats", "adm:params", "adm:vip"}
+            or (c.data or "").startswith("adm:set:")
+            or ((c.data or "").startswith("adm:vip:") and not (c.data or "").startswith("adm:vip:do:"))
+            or (c.data or "").startswith("adm:bs:")
+            or (c.data or "").startswith("adm:ce:")
+            or (c.data or "").startswith("adm:ck:")
+            or (c.data or "").startswith("adm:cl:")
+            or (c.data or "").startswith("adm:param:")
+            or (c.data or "").startswith("adm:bc:")
+            or (c.data or "").startswith("adm:cks:")
+            or (c.data or "").startswith("adm:noop")
+            or (c.data or "").startswith("adm:users")
+            or (c.data or "").startswith("adm:user:")
         )
     )
     async def admin_router(cb: CallbackQuery, state: FSMContext):
         if not owner_only(cb.from_user.id):
-            await cb.answer()
-            return
+            await cb.answer(); return
 
         data = cb.data or ""
+
         # ----- меню верхнего уровня
         if data == "adm:menu":
             await state.clear()
@@ -1280,6 +1098,7 @@ async def run_child_bot(tenant: Tenant):
             )
             await cb.answer(); return
 
+        # ----- Постбэки (URL) с повторным депозитом
         if data == "adm:pb":
             db = SessionLocal()
             try:
@@ -1291,11 +1110,8 @@ async def run_child_bot(tenant: Tenant):
             base = settings.service_host.rstrip("/")
 
             reg = f"{base}/pb?tenant_id={tenant.id}&event=registration&t={secret}&click_id={{click_id}}&trader_id={{trader_id}}"
-
             dep = f"{base}/pb?tenant_id={tenant.id}&event=deposit&t={secret}&click_id={{click_id}}&trader_id={{trader_id}}&sum={{sumdep}}"
-
             redep = f"{base}/pb?tenant_id={tenant.id}&event=deposit_repeat&t={secret}&click_id={{click_id}}&trader_id={{trader_id}}&sum={{sumdep}}"
-
 
             txt = (
                 "<b>Постбэки Pocket Option</b>\n\n"
@@ -1305,7 +1121,6 @@ async def run_child_bot(tenant: Tenant):
                 "• click_id → <code>click_id</code>\n"
                 "• trader_id → <code>trader_id</code>\n\n"
             )
-
             if cfg.require_deposit:
                 txt += (
                     "💳 <b>Первый депозит</b>\n"
@@ -1332,185 +1147,9 @@ async def run_child_bot(tenant: Tenant):
                 ),
                 disable_web_page_preview=True,
             )
-            await cb.answer();
-            return
-
-        # ----- LINKS input
-        if data == "adm:set:support":
-            await state.set_state(AdminForm.waiting_support)
-            await cb.message.edit_text("Пришлите <b>новый Support URL</b> одним сообщением.\n\n⬅️ /admin — отмена.")
             await cb.answer(); return
 
-        if data == "adm:set:ref":
-            await state.set_state(AdminForm.waiting_ref)
-            await cb.message.edit_text(
-                "Пришлите <b>новую реферальную ссылку</b> одним сообщением.\n\n⬅️ /admin — отмена.")
-            await cb.answer(); return
-
-        if data == "adm:set:dep":
-            await state.set_state(AdminForm.waiting_dep)
-            await cb.message.edit_text("Пришлите <b>ссылку для депозита</b> одним сообщением.\n\n⬅️ /admin — отмена.")
-            await cb.answer(); return
-
-        if data == "adm:set:miniapp":
-            await state.set_state(AdminForm.waiting_miniapp)
-            await cb.message.edit_text(
-                "Пришлите <b>Web-app URL</b> одним сообщением.\n"
-                "Совет: выложите мини-апп на GitHub Pages и пришлите HTTPS ссылку.\n\n⬅️ /admin — отмена."
-            )
-            await cb.answer(); return
-
-        if data == "adm:set:channel":
-            await state.set_state(AdminForm.waiting_channel)
-            await cb.message.edit_text(
-                "Если у вас <b>публичный канал</b> — отправьте <code>@username</code> или ссылку на канал/группу "
-                "(например: https://t.me/username).\n\n"
-                "Если у вас <b>приватный канал</b> — отправьте ID канала и инвайт-ссылку в формате:\n"
-                "<code>-1001234567890 | https://t.me/+invite</code>\n\n"
-                "⚠️ Бот должен быть участником (в канале — админом)."
-            )
-
-            await cb.answer(); return
-
-        # ----- PARAMS toggles
-        if data == "adm:param:toggle_dep":
-            db = SessionLocal()
-            try:
-                cfg = get_cfg(db, tenant.id)
-                cfg.require_deposit = not cfg.require_deposit
-                db.commit()
-                await cb.message.edit_text("⚙️ Параметры", reply_markup=kb_params(cfg))
-                await cb.answer("Сохранено")
-            finally:
-                db.close()
-            return
-
-        if data == "adm:param:toggle_sub":
-            db = SessionLocal()
-            try:
-                cfg = get_cfg(db, tenant.id)
-                cfg.require_subscription = not bool(getattr(cfg, "require_subscription", False))
-                db.commit()
-                await cb.message.edit_text("⚙️ Параметры", reply_markup=kb_params(cfg))
-                await cb.answer("Сохранено")
-            finally:
-                db.close()
-            return
-
-        if data == "adm:param:set_min":
-            await state.set_state(AdminForm.params_wait_min_dep)
-            await cb.message.edit_text("Введи минимальную сумму депозита в $ (целое число).")
-            await cb.answer(); return
-
-        if data == "adm:param:stock_miniapp":
-            db = SessionLocal()
-            try:
-                t = db.query(Tenant).filter(Tenant.id == tenant.id).first()
-                t.miniapp_url = None
-                db.commit()
-            finally:
-                db.close()
-            await cb.message.edit_text("✅ Вернул стоковую мини-апп (из ENV).", reply_markup=kb_admin_main())
-            await cb.answer(); return
-
-        # ----- CONTENT flow
-        if data.startswith("adm:cl:"):
-            lang = data.split(":")[2]
-            await state.update_data(content_lang=lang)
-            await state.set_state(AdminForm.content_wait_key)
-            await cb.message.edit_text("🧩 Контент: выберите экран", reply_markup=kb_content_keys(lang))
-            await cb.answer(); return
-
-        if data.startswith("adm:cks:"):
-            _, _, screen_key, lang = data.split(":")
-            await state.update_data(content_lang=lang, content_key=screen_key)
-            db = SessionLocal()
-            try:
-                summary = editor_status_text(db, tenant.id, screen_key, lang)
-            finally:
-                db.close()
-            await cb.message.edit_text(summary, reply_markup=kb_content_screen(screen_key, lang))
-            await cb.answer(); return
-
-        if data.startswith("adm:ck:"):
-            _, _, key, lang = data.split(":")
-            await state.update_data(content_lang=lang, content_key=key)
-            db = SessionLocal()
-            try:
-                summary = editor_status_text(db, tenant.id, key, lang)
-            finally:
-                db.close()
-            await cb.message.edit_text(summary, reply_markup=kb_content_edit(key, lang))
-            await cb.answer(); return
-
-        if data.startswith("adm:ce:text:"):
-            _, _, _, key, lang = data.split(":")
-            await state.update_data(content_lang=lang, content_key=key)
-            await state.set_state(AdminForm.content_wait_text)
-            await cb.message.edit_text(
-                f"Пришлите <b>новый текст</b> для «{key_title(key, lang)}» ({lang}) одним сообщением.")
-            await cb.answer(); return
-
-        if data.startswith("adm:ce:photo:"):
-            _, _, _, key, lang = data.split(":")
-            await state.update_data(content_lang=lang, content_key=key)
-            await state.set_state(AdminForm.content_wait_photo)
-            await cb.message.edit_text(f"Пришлите <b>фото</b> для «{key_title(key, lang)}» ({lang}).")
-            await cb.answer(); return
-
-        if data.startswith("adm:ce:delphoto:"):
-            _, _, _, key, lang = data.split(":")
-            db = SessionLocal()
-            try:
-                tt = db.query(TenantText).filter(
-                    TenantText.tenant_id == tenant.id, TenantText.locale == lang, TenantText.key == key
-                ).first()
-                if tt and tt.image_file_id:
-                    tt.image_file_id = None
-                    db.commit()
-                    msg = f"🗑 Картинка удалена для «{key_title(key, lang)}» ({lang})."
-                else:
-                    msg = f"Картинки не было для «{key_title(key, lang)}» ({lang})."
-            finally:
-                db.close()
-            await cb.message.edit_text(msg, reply_markup=kb_content_edit(key, lang))
-            await cb.answer(); return
-
-        if data.startswith("adm:ce:reset:"):
-            _, _, _, key, lang = data.split(":")
-            db = SessionLocal()
-            try:
-                tt = db.query(TenantText).filter(
-                    TenantText.tenant_id == tenant.id, TenantText.locale == lang, TenantText.key == key
-                ).first()
-                if tt:
-                    db.delete(tt)
-                    db.commit()
-            finally:
-                db.close()
-            await cb.message.edit_text(
-                f"🔄 Сброшено к дефолту для «{key_title(key, lang)}» ({lang}).",
-                reply_markup=kb_content_edit(key, lang)
-            )
-            await cb.answer(); return
-
-        if data.startswith("adm:ce:preview:"):
-            _, _, _, key, lang = data.split(":")
-            db = SessionLocal()
-            try:
-                text, img = tget(db, tenant.id, key, lang, default_text(key, lang))
-                cfg = get_cfg(db, tenant.id)
-                if key == "step2":
-                    text = text.replace("{{min_dep}}", str(cfg.min_deposit))
-            finally:
-                db.close()
-            if img:
-                await cb.message.answer_photo(img, caption=f"<b>Предпросмотр ({lang} / {key})</b>\n{text}")
-            else:
-                await cb.message.answer(f"<b>Предпросмотр ({lang} / {key})</b>\n{text}")
-            await cb.answer(); return
-
-        # ----- VIP меню
+        # ----- VIP меню (с пагинацией списка кандидатов)
         if data == "adm:vip":
             db = SessionLocal()
             try:
@@ -1521,11 +1160,10 @@ async def run_child_bot(tenant: Tenant):
             kb = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [InlineKeyboardButton(text=f"📋 Список кандидатов (≥ ${thr})", callback_data="adm:vip:list")],
-                    [InlineKeyboardButton(text="🧾 Постбэк: Регистрация", callback_data="adm:vip:reg")],
-                    [InlineKeyboardButton(text="💳 Постбэк: Депозит", callback_data="adm:vip:dep")],
+                    [InlineKeyboardButton(text="🧾 Постбэк: Регистрация", callback_data="adm:vip:reg"),
+                     InlineKeyboardButton(text="💳 Постбэк: Депозит", callback_data="adm:vip:dep")],
                     [InlineKeyboardButton(text="✅ Выдать PLATINUM доступ", callback_data="adm:vip:grant")],
-                    [InlineKeyboardButton(text="🛠 Изменить мини-апп (для имеющих доступ)",
-                                          callback_data="adm:vip:miniapp")],
+                    [InlineKeyboardButton(text="🛠 Изменить мини-апп (для имеющих доступ)", callback_data="adm:vip:miniapp")],
                     [InlineKeyboardButton(text="🎯 Задать порог PLATINUM", callback_data="adm:vip:thr")],
                     [InlineKeyboardButton(text="🆔 Управление по TG ID", callback_data="adm:vip:byid")],
                     [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:menu")],
@@ -1554,14 +1192,12 @@ async def run_child_bot(tenant: Tenant):
                 cands.sort(key=lambda x: -x[1])
             finally:
                 db.close()
-
             page = 1
             rows, pages = _vip_list_build_rows(cands, page, "adm:vip:list:page")
             txt = f"<b>Кандидаты PLATINUM (≥ ${thr}):</b>\nВсего: {len(cands)}"
             await cb.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
                                        disable_web_page_preview=True)
-            await cb.answer();
-            return
+            await cb.answer(); return
 
         if data.startswith("adm:vip:list:page:"):
             page = int(data.split(":")[-1])
@@ -1578,301 +1214,12 @@ async def run_child_bot(tenant: Tenant):
                 cands.sort(key=lambda x: -x[1])
             finally:
                 db.close()
-
             rows, pages = _vip_list_build_rows(cands, max(1, page), "adm:vip:list:page")
             txt = f"<b>Кандидаты PLATINUM (≥ ${thr}):</b>\nВсего: {len(cands)}"
             await _safe_edit_msg(cb, txt, InlineKeyboardMarkup(inline_keyboard=rows))
-            await cb.answer();
-            return
-
-        # REG
-        if data == "adm:vip:reg":
-            db = SessionLocal()
-            try:
-                user_ids = [u.tg_user_id for u in db.query(User)
-                .filter(User.tenant_id == tenant.id)
-                .order_by(User.updated_at.desc().nullslast()).all() if u.tg_user_id]
-            finally:
-                db.close()
-            page = 1
-            rows = _vip_pick_user_rows(user_ids, page, "adm:vip:reg:page", "adm:vip:do:reg")
-            await cb.message.edit_text("Выберите пользователя для РЕГИСТРАЦИИ (ручной постбэк):",
-                                       reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
-            await cb.answer();
-            return
-
-        if data.startswith("adm:vip:reg:page:"):
-            page = int(data.split(":")[-1])
-            db = SessionLocal()
-            try:
-                user_ids = [u.tg_user_id for u in db.query(User)
-                .filter(User.tenant_id == tenant.id)
-                .order_by(User.updated_at.desc().nullslast()).all() if u.tg_user_id]
-            finally:
-                db.close()
-            rows = _vip_pick_user_rows(user_ids, max(1, page), "adm:vip:reg:page", "adm:vip:do:reg")
-            await _safe_edit_msg(cb, "Выберите пользователя для РЕГИСТРАЦИИ (ручной постбэк):",
-                                 InlineKeyboardMarkup(inline_keyboard=rows))
-            await cb.answer();
-            return
-
-        # DEP
-        if data == "adm:vip:dep":
-            db = SessionLocal()
-            try:
-                user_ids = [u.tg_user_id for u in db.query(User)
-                .filter(User.tenant_id == tenant.id)
-                .order_by(User.updated_at.desc().nullslast()).all() if u.tg_user_id]
-            finally:
-                db.close()
-            page = 1
-            rows = _vip_pick_user_rows(user_ids, page, "adm:vip:dep:page", "adm:vip:do:dep")
-            await cb.message.edit_text("Выберите пользователя для ДЕПОЗИТА (ручной постбэк):",
-                                       reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
-            await cb.answer();
-            return
-
-        if data.startswith("adm:vip:dep:page:"):
-            page = int(data.split(":")[-1])
-            db = SessionLocal()
-            try:
-                user_ids = [u.tg_user_id for u in db.query(User)
-                .filter(User.tenant_id == tenant.id)
-                .order_by(User.updated_at.desc().nullslast()).all() if u.tg_user_id]
-            finally:
-                db.close()
-            rows = _vip_pick_user_rows(user_ids, max(1, page), "adm:vip:dep:page", "adm:vip:do:dep")
-            await _safe_edit_msg(cb, "Выберите пользователя для ДЕПОЗИТА (ручной постбэк):",
-                                 InlineKeyboardMarkup(inline_keyboard=rows))
-            await cb.answer();
-            return
-
-        # GRANT
-        if data == "adm:vip:grant":
-            db = SessionLocal()
-            try:
-                user_ids = [u.tg_user_id for u in db.query(User)
-                .filter(User.tenant_id == tenant.id)
-                .order_by(User.updated_at.desc().nullslast()).all() if u.tg_user_id]
-            finally:
-                db.close()
-            page = 1
-            rows = _vip_pick_user_rows(user_ids, page, "adm:vip:grant:page", "adm:vip:set")
-            await cb.message.edit_text("Выберите пользователя для ВЫДАЧИ PLATINUM:",
-                                       reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
-            await cb.answer();
-            return
-
-        if data.startswith("adm:vip:grant:page:"):
-            page = int(data.split(":")[-1])
-            db = SessionLocal()
-            try:
-                user_ids = [u.tg_user_id for u in db.query(User)
-                .filter(User.tenant_id == tenant.id)
-                .order_by(User.updated_at.desc().nullslast()).all() if u.tg_user_id]
-            finally:
-                db.close()
-            rows = _vip_pick_user_rows(user_ids, max(1, page), "adm:vip:grant:page", "adm:vip:set")
-            await _safe_edit_msg(cb, "Выберите пользователя для ВЫДАЧИ PLATINUM:",
-                                 InlineKeyboardMarkup(inline_keyboard=rows))
-            await cb.answer();
-            return
-
-        # ----- VIP per-user miniapp settings
-        if data.startswith("adm:vip:miniapp"):
-            if data == "adm:vip:miniapp":
-                db = SessionLocal()
-                try:
-                    cfg = get_cfg(db, tenant.id)
-                    thr = int(cfg.vip_threshold or 500)
-                    users = db.query(User).filter(User.tenant_id == tenant.id).all()
-                    rows = []
-                    for u in users:
-                        total = get_deposit_total(db, tenant.id, u)
-                        if u.is_vip or total >= thr:
-                            label = f"{u.tg_user_id} ({'VIP' if u.is_vip else f'${total}'})"
-                            rows.append([InlineKeyboardButton(text=label, callback_data=f"adm:vip:miniapp:set:{u.tg_user_id}")])
-                    rows = rows[:50] if rows else [[InlineKeyboardButton(text="Пока нет пользователей с доступом", callback_data="adm:vip")]]
-                    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip")])
-                    kb = InlineKeyboardMarkup(inline_keyboard=rows)
-                finally:
-                    db.close()
-                await cb.message.edit_text("Выберите пользователя для изменения PLATINUM мини-аппы:", reply_markup=kb)
-                await cb.answer(); return
-
-            if data.startswith("adm:vip:miniapp:set:"):
-                uid = int(data.rsplit(":", 1)[-1])
-                db = SessionLocal()
-                try:
-                    u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
-                    if not u:
-                        await cb.answer("Юзер не найден"); return
-                    has_vip = bool(u.is_vip)
-                    has_custom = bool(u.vip_miniapp_url)
-                finally:
-                    db.close()
-                rows = [
-                    [InlineKeyboardButton(text="🟣 Выдать PLATINUM-мини-апп (ENV)", callback_data=f"adm:vip:miniapp:env:{uid}")],
-                    [InlineKeyboardButton(text="✏️ Задать кастомный PLATINUM URL", callback_data=f"adm:vip:miniapp:ask:{uid}")],
-                    [InlineKeyboardButton(text="↩️ Вернуть стоковую мини-апп", callback_data=f"adm:vip:miniapp:stock:{uid}")],
-                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:vip:miniapp")],
-                ]
-                status = []
-                if has_vip: status.append("VIP=✅")
-                if has_custom: status.append("Custom URL=✅")
-                if not status: status.append("обычная мини-апп")
-                title = f"Пользователь <code>{uid}</code>\nТекущее: " + ", ".join(status)
-                await cb.message.edit_text(title, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-                                           disable_web_page_preview=True)
-                await cb.answer(); return
-
-            if data.startswith("adm:vip:miniapp:env:"):
-                uid = int(data.rsplit(":", 1)[-1])
-                db = SessionLocal()
-                try:
-                    u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
-                    if not u:
-                        await cb.answer("Юзер не найден"); return
-                    u.is_vip = True
-                    u.vip_miniapp_url = None
-                    db.commit()
-                    # чистый чат + обновление главного
-                    with contextlib.suppress(Exception):
-                        await safe_delete_message(bot, uid, getattr(u, "last_message_id", None))
-                    await render_main(bot, tenant, u)
-                    # уведомление
-                    locale = u.lang or (get_fresh_tenant(db, tenant.id) or tenant).lang_default or "ru"
-                    m = "🎉 Вам выдан доступ к премиум-боту!" if locale == "ru" else "🎉 You’ve been granted access to the premium bot!"
-                    kb_support = None
-                    fresh_tenant = get_fresh_tenant(db, tenant.id) or tenant
-                    supp = _normalize_support_url(fresh_tenant.support_url) if fresh_tenant.support_url else None
-                    if supp:
-                        kb_support = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=("🆘 Поддержка" if locale == "ru" else "🆘 Support"), url=supp)]])
-                    msg = await bot.send_message(uid, m, reply_markup=kb_support)
-                    u.last_message_id = msg.message_id
-                    db.commit()
-                finally:
-                    db.close()
-                await cb.message.edit_text("✅ Назначена PLATINUM-мини-апп из ENV. Пользователь уже видит её в «Получить сигнал».",
-                                           reply_markup=kb_admin_main())
-                await cb.answer("Готово"); return
-
-            if data.startswith("adm:vip:miniapp:ask:"):
-                uid = int(data.rsplit(":", 1)[-1])
-                await state.update_data(vip_user_id=uid)
-                await state.set_state(AdminForm.vip_wait_miniapp_url)
-                await cb.message.edit_text(
-                    f"Пришлите PLATINUM Web-app URL для <code>{uid}</code> одним сообщением.\n"
-                    f"Чтобы очистить, пришлите «-».")
-                await cb.answer(); return
-
-            if data.startswith("adm:vip:miniapp:stock:"):
-                uid = int(data.rsplit(":", 1)[-1])
-                db = SessionLocal()
-                try:
-                    u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
-                    if not u:
-                        await cb.answer("Юзер не найден"); return
-                    u.vip_miniapp_url = None
-                    u.is_vip = False
-                    db.commit()
-                    with contextlib.suppress(Exception):
-                        await safe_delete_message(bot, uid, getattr(u, "last_message_id", None))
-                    await render_main(bot, tenant, u)
-                finally:
-                    db.close()
-                await cb.message.edit_text("↩️ Вернул обычную мини-апп. Теперь «Получить сигнал» открывает не-PLATINUM версию.",
-                                           reply_markup=kb_admin_main())
-                await cb.answer("Готово"); return
-
-        # ----- VIP by id simple
-        if data == "adm:vip:byid":
-            await state.set_state(AdminForm.vip_wait_user_id)
-            await cb.message.edit_text("Пришлите TG ID пользователя.")
             await cb.answer(); return
 
-        if data.startswith("adm:vip:set:"):
-            uid = int(data.rsplit(":", 1)[-1])
-            db = SessionLocal()
-            try:
-                u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
-                if not u:
-                    await cb.answer("Юзер не найден"); return
-                u.is_vip = True
-                u.vip_notified = True
-                db.commit()
-                with contextlib.suppress(Exception):
-                    await safe_delete_message(bot, uid, getattr(u, "last_message_id", None))
-                await render_main(bot, tenant, u)
-            finally:
-                db.close()
-            try:
-                db = SessionLocal()
-                fresh_tenant = get_fresh_tenant(db, tenant.id) or tenant
-                db.close()
-                locale = u.lang or fresh_tenant.lang_default or "ru"
-                text = ("🎉 Вам выдан доступ к премиум-боту! Напишите в поддержку для подключения."
-                        if locale == "ru" else
-                        "🎉 You’ve been granted access to the premium bot! Contact support to get connected.")
-                kb = None
-                supp = _normalize_support_url(fresh_tenant.support_url) if fresh_tenant.support_url else None
-                if supp:
-                    kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text=("🆘 Поддержка" if locale == "ru" else "🆘 Support"), url=supp)]
-                    ])
-                msg = await bot.send_message(uid, text, reply_markup=kb)
-                db = SessionLocal()
-                try:
-                    u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
-                    if u:
-                        u.last_message_id = msg.message_id
-                        db.commit()
-                finally:
-                    db.close()
-            except Exception:
-                pass
-            await cb.answer("PLATINUM включён"); return
-
-        if data.startswith("adm:vip:unset:"):
-            uid = int(data.rsplit(":", 1)[-1])
-            db = SessionLocal()
-            try:
-                u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
-                if not u:
-                    await cb.answer("Юзер не найден"); return
-                u.is_vip = False
-                db.commit()
-                with contextlib.suppress(Exception):
-                    await safe_delete_message(bot, uid, getattr(u, "last_message_id", None))
-                await render_main(bot, tenant, u)
-            finally:
-                db.close()
-            await cb.answer("PLATINUM выключен"); return
-
-        if data.startswith("adm:vip:url:ask:"):
-            uid = int(data.rsplit(":", 1)[-1])
-            await state.update_data(vip_user_id=uid)
-            await state.set_state(AdminForm.vip_wait_url)
-            await cb.message.edit_text(f"Пришлите PLATINUM Web-app URL для <code>{uid}</code> одним сообщением.")
-            await cb.answer(); return
-
-        if data.startswith("adm:vip:url:clear:"):
-            uid = int(data.rsplit(":", 1)[-1])
-            db = SessionLocal()
-            try:
-                u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
-                if not u:
-                    await cb.answer("Юзер не найден"); return
-                u.vip_miniapp_url = None
-                db.commit()
-                with contextlib.suppress(Exception):
-                    await safe_delete_message(bot, uid, getattr(u, "last_message_id", None))
-                await render_main(bot, tenant, u)
-            finally:
-                db.close()
-            await cb.answer("URL очищен"); return
-
-        # ---- Ваши рефы: вход в список (стр.1)
+        # ---- Ваши рефы: вход + поиск
         if data == "adm:users":
             page = 1
             db = SessionLocal()
@@ -1885,7 +1232,10 @@ async def run_child_bot(tenant: Tenant):
                 db.close()
 
             rows = []
-            # Подтянем username’ы лениво
+            # строка поискового входа
+            rows.append([InlineKeyboardButton(text="🔎 Поиск по ID / @username / TraderID",
+                                              callback_data="adm:users:search")])
+            # список юзеров
             for u in users:
                 uname = await _try_username(cb.message.bot, u.tg_user_id) if u.tg_user_id else "—"
                 title = f"{u.tg_user_id or '—'} • {uname}"
@@ -1894,13 +1244,25 @@ async def run_child_bot(tenant: Tenant):
             nav = []
             if total > page * USERS_PER_PAGE:
                 nav.append(InlineKeyboardButton(text="Вперёд »", callback_data=f"adm:users:page:{page + 1}"))
-            rows.append(nav) if nav else None
+            if nav: rows.append(nav)
             rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:menu")])
 
             text = f"👥 <b>Ваши рефы</b>\nВсего: <b>{total}</b>\nСтр. {page}"
             await _safe_edit_msg(cb, text, InlineKeyboardMarkup(inline_keyboard=rows))
-            await cb.answer();
-            return
+            await cb.answer(); return
+
+        if data == "adm:users:search":
+            await state.set_state(AdminForm.users_search_query)
+            await cb.message.edit_text(
+                "🔎 <b>Поиск пользователя</b>\n"
+                "Пришлите <b>TG ID</b>, <b>@username</b> или <b>Trader ID</b> одним сообщением.\n\n"
+                "Примеры:\n"
+                "• <code>123456789</code>\n"
+                "• <code>@john_doe</code>\n"
+                "• <code>TR-000123</code>\n\n"
+                "⬅️ /admin — отмена."
+            )
+            await cb.answer(); return
 
         # ---- Ваши рефы: пагинация
         if data.startswith("adm:users:page:"):
@@ -1916,6 +1278,8 @@ async def run_child_bot(tenant: Tenant):
                 db.close()
 
             rows = []
+            rows.append([InlineKeyboardButton(text="🔎 Поиск по ID / @username / TraderID",
+                                              callback_data="adm:users:search")])
             for u in users:
                 uname = await _try_username(cb.message.bot, u.tg_user_id) if u.tg_user_id else "—"
                 title = f"{u.tg_user_id or '—'} • {uname}"
@@ -1924,6 +1288,7 @@ async def run_child_bot(tenant: Tenant):
             nav = []
             if page > 1:
                 nav.append(InlineKeyboardButton(text="« Назад", callback_data=f"adm:users:page:{page - 1}"))
+            nav.append(InlineKeyboardButton(text=f"Стр. {page}", callback_data="adm:noop"))
             if total > page * USERS_PER_PAGE:
                 nav.append(InlineKeyboardButton(text="Вперёд »", callback_data=f"adm:users:page:{page + 1}"))
             if nav: rows.append(nav)
@@ -1931,31 +1296,23 @@ async def run_child_bot(tenant: Tenant):
 
             text = f"👥 <b>Ваши рефы</b>\nВсего: <b>{total}</b>\nСтр. {page}"
             await _safe_edit_msg(cb, text, InlineKeyboardMarkup(inline_keyboard=rows))
-            await cb.answer();
-            return
+            await cb.answer(); return
 
         # ---- Карточка пользователя
         if data.startswith("adm:user:"):
             try:
                 uid = int(data.split(":")[2])
             except Exception:
-                await cb.answer("Некорректный ID")
-                return
+                await cb.answer("Некорректный ID"); return
 
             db = SessionLocal()
             try:
-                u = db.query(User).filter(
-                    User.tenant_id == tenant.id,
-                    User.tg_user_id == uid
-                ).first()
+                u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == uid).first()
                 if not u:
-                    await cb.answer("Пользователь не найден")
-                    return
+                    await cb.answer("Пользователь не найден"); return
 
-                # сумма депозитов
                 dep_total = get_deposit_total(db, tenant.id, u)
 
-                # статус по шагам
                 step_map = {
                     UserStep.new: "new",
                     UserStep.asked_reg: "asked_reg",
@@ -1965,15 +1322,12 @@ async def run_child_bot(tenant: Tenant):
                 }
                 step = step_map.get(u.step, str(u.step))
 
-                # доступ (учёт require_deposit)
                 cfg = get_cfg(db, tenant.id)
                 has_access = dep_total >= cfg.min_deposit if cfg.require_deposit else (u.step >= UserStep.registered)
 
-                # дата обновления
                 upd = getattr(u, "updated_at", None)
                 upd_str = upd.strftime("%Y-%m-%d %H:%M:%S") if upd else "—"
 
-                # Trader ID (берём из первого postback регистрации)
                 pb_reg = db.query(Postback).filter(
                     Postback.tenant_id == tenant.id,
                     Postback.event == "registration",
@@ -1981,8 +1335,7 @@ async def run_child_bot(tenant: Tenant):
                     Postback.token_ok.is_(True)
                 ).order_by(Postback.created_at.asc()).first()
 
-                trader_id = pb_reg.trader_id if pb_reg else "—"
-
+                trader_id = u.trader_id or (pb_reg.trader_id if pb_reg else "—")
             finally:
                 db.close()
 
@@ -2004,16 +1357,20 @@ async def run_child_bot(tenant: Tenant):
             )
 
             kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ К списку рефов", callback_data="adm:users")],
-                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="adm:menu")],
+                [InlineKeyboardButton(text="🧾 Регистрация", callback_data=f"adm:vip:do:reg:{uid}"),
+                 InlineKeyboardButton(text="💳 Депозит", callback_data=f"adm:vip:do:dep:{uid}")],
+                [InlineKeyboardButton(text=("👑 Выключить VIP" if u.is_vip else "👑 Включить VIP"),
+                                      callback_data=(f"adm:vip:unset:{uid}" if u.is_vip else f"adm:vip:set:{uid}")),
+                 InlineKeyboardButton(text="🟣 Задать/очистить VIP URL", callback_data=f"adm:vip:url:ask:{uid}")],
+                [InlineKeyboardButton(text="↩️ Обычная мини-апп", callback_data=f"adm:vip:miniapp:stock:{uid}")],
+                [InlineKeyboardButton(text="⬅️ К списку рефов", callback_data="adm:users"),
+                 InlineKeyboardButton(text="🏠 Главное меню", callback_data="adm:menu")],
             ])
 
             await _safe_edit_msg(cb, txt, kb)
-            await cb.answer()
-            return
+            await cb.answer(); return
 
-        # ----- Рассылка: выбор сегмента → ввод контента
-        # --- Открыть мастер рассылки
+        # ----- Рассылка: старт
         if data == "adm:broadcast":
             await state.clear()
             await state.set_state(AdminForm.bcast_wait_segment)
@@ -2021,8 +1378,7 @@ async def run_child_bot(tenant: Tenant):
                 "📣 <b>Рассылка</b>\nВыберите сегмент получателей:",
                 reply_markup=kb_broadcast_segments()
             )
-            await cb.answer();
-            return
+            await cb.answer(); return
 
         # --- Выбор сегмента → сбор контента
         if data.startswith("adm:bs:"):
@@ -2030,7 +1386,6 @@ async def run_child_bot(tenant: Tenant):
             if seg not in {"all", "registered", "deposited"}:
                 seg = "all"
 
-            # Подсчитаем получателей заранее
             db = SessionLocal()
             try:
                 q = db.query(User).filter(User.tenant_id == tenant.id)
@@ -2048,8 +1403,7 @@ async def run_child_bot(tenant: Tenant):
             if recipients == 0:
                 txt = "📣 <b>Рассылка</b>\nВыбранный сегмент пустой. Выберите другой сегмент."
                 await cb.message.edit_text(txt, reply_markup=kb_broadcast_segments())
-                await cb.answer();
-                return
+                await cb.answer(); return
 
             await cb.message.edit_text(
                 f"📣 <b>Рассылка</b>\nПолучателей: <b>{recipients}</b>\n\n"
@@ -2059,8 +1413,7 @@ async def run_child_bot(tenant: Tenant):
                     [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:broadcast")]
                 ])
             )
-            await cb.answer();
-            return
+            await cb.answer(); return
 
         # --- Запуск рассылки
         if data == "adm:bc:run":
@@ -2072,7 +1425,6 @@ async def run_child_bot(tenant: Tenant):
             src_chat_id = data_state.get("bcast_src_chat")
             src_msg_id = data_state.get("bcast_src_msg")
 
-            # Соберём список получателей
             db = SessionLocal()
             try:
                 q = db.query(User).filter(User.tenant_id == tenant.id)
@@ -2090,10 +1442,8 @@ async def run_child_bot(tenant: Tenant):
                     "📣 В выбранном сегменте нет получателей.",
                     reply_markup=kb_broadcast_segments()
                 )
-                await cb.answer();
-                return
+                await cb.answer(); return
 
-            # Частота (в час): по умолчанию 60/ч; min 10/ч, max 3600/ч
             rate = int(getattr(settings, "broadcast_rate_per_hour", 60) or 60)
             rate = max(10, min(rate, 3600))
             interval = max(1.0, 3600.0 / rate)
@@ -2117,14 +1467,8 @@ async def run_child_bot(tenant: Tenant):
                 for uid in users:
                     try:
                         if src_chat_id and src_msg_id:
-                            # Копируем оригинальное сообщение 1-в-1 (и текст, и медиа)
-                            await bot_local.copy_message(
-                                chat_id=uid,
-                                from_chat_id=src_chat_id,
-                                message_id=src_msg_id
-                            )
+                            await bot_local.copy_message(chat_id=uid, from_chat_id=src_chat_id, message_id=src_msg_id)
                         else:
-                            # Фолбэк: отправка «как раньше»
                             if media_kind == "photo":
                                 await bot_local.send_photo(uid, media_id, caption=text or "")
                             elif media_kind == "video":
@@ -2168,6 +1512,9 @@ async def run_child_bot(tenant: Tenant):
 
                 with contextlib.suppress(Exception):
                     await bot_local.send_message(tenant.owner_tg_id, summary)
+
+            # fire-and-forget внутри текущего процесса
+            asyncio.create_task(_run_broadcast())
 
     # ---- Admin: LINK inputs
     @r.message(AdminForm.waiting_support)
@@ -2230,7 +1577,6 @@ async def run_child_bot(tenant: Tenant):
             db.close()
         await state.clear()
         await msg.answer("✅ Ссылка для депозита обновлена.", reply_markup=kb_admin_main())
-
     @r.message(AdminForm.waiting_channel)
     async def on_channel_input(msg: Message, state: FSMContext):
         if msg.from_user.id != tenant.owner_tg_id:
@@ -2239,7 +1585,7 @@ async def run_child_bot(tenant: Tenant):
         db = SessionLocal()
         try:
             t = db.query(Tenant).filter(Tenant.id == tenant.id).first()
-            t.channel_url = raw  # можно хранить "@name" | "-100…" | "t.me/+invite" | "-100… | https://t.me/+invite"
+            t.channel_url = raw
             db.commit()
         finally:
             db.close()
@@ -2369,21 +1715,17 @@ async def run_child_bot(tenant: Tenant):
                 await cb.answer("Юзер не найден"); return
 
             pb = Postback(
-                tenant_id=tenant.id,
-                event="registration",
-                click_id=str(uid),
-                trader_id="manual",
-                sum=0,
-                token_ok=True,
+                tenant_id=tenant.id, event="registration", click_id=str(uid),
+                trader_id="manual", sum=0, token_ok=True,
             )
             db.add(pb)
             u.step = UserStep.registered
             db.commit()
 
             with contextlib.suppress(Exception):
-                await safe_delete_message(bot, uid, getattr(u, "last_message_id", None))
+                await safe_delete_message(cb.message.bot, uid, getattr(u, "last_message_id", None))
             with contextlib.suppress(Exception):
-                await render_get(bot, tenant, u)
+                await render_get(cb.message.bot, tenant, u)
 
             await cb.answer("Ок: регистрация проставлена")
             await cb.message.edit_text("✅ Ручной постбэк «Регистрация» установлен.", reply_markup=kb_admin_main())
@@ -2406,21 +1748,17 @@ async def run_child_bot(tenant: Tenant):
             sum_value = int(cfg.min_deposit or 50)
 
             pb = Postback(
-                tenant_id=tenant.id,
-                event="deposit",
-                click_id=str(uid),
-                trader_id="manual",
-                sum=sum_value,
-                token_ok=True,
+                tenant_id=tenant.id, event="deposit", click_id=str(uid),
+                trader_id="manual", sum=sum_value, token_ok=True,
             )
             db.add(pb)
             u.step = UserStep.deposited
             db.commit()
 
             with contextlib.suppress(Exception):
-                await safe_delete_message(bot, uid, getattr(u, "last_message_id", None))
+                await safe_delete_message(cb.message.bot, uid, getattr(u, "last_message_id", None))
             with contextlib.suppress(Exception):
-                await render_get(bot, tenant, u, force_unlocked=True)
+                await render_get(cb.message.bot, tenant, u, force_unlocked=True)
 
             await cb.answer("Ок: депозит проставлен")
             await cb.message.edit_text("✅ Ручной постбэк «Депозит» установлен.", reply_markup=kb_admin_main())
@@ -2444,9 +1782,9 @@ async def run_child_bot(tenant: Tenant):
             u.vip_miniapp_url = url
             db.commit()
             with contextlib.suppress(Exception):
-                await safe_delete_message(bot, uid, getattr(u, "last_message_id", None))
+                await safe_delete_message(msg.bot, uid, getattr(u, "last_message_id", None))
             with contextlib.suppress(Exception):
-                await render_main(bot, tenant, u)
+                await render_main(msg.bot, tenant, u)
         finally:
             db.close()
         await state.clear()
@@ -2472,15 +1810,16 @@ async def run_child_bot(tenant: Tenant):
                 u.vip_miniapp_url = url
             db.commit()
             with contextlib.suppress(Exception):
-                await safe_delete_message(bot, uid, getattr(u, "last_message_id", None))
+                await safe_delete_message(msg.bot, uid, getattr(u, "last_message_id", None))
             with contextlib.suppress(Exception):
-                await render_main(bot, tenant, u)
+                await render_main(msg.bot, tenant, u)
         finally:
             db.close()
         await state.clear()
         await msg.answer("✅ Мини-апп для пользователя обновлена. Напишите ему в ЛС, чтобы он нажал /start.",
                          reply_markup=kb_admin_main())
 
+    # ---- Рассылка: сбор контента
     @r.message(AdminForm.bcast_wait_content)
     async def bcast_collect(msg: Message, state: FSMContext):
         if msg.from_user.id != tenant.owner_tg_id:
@@ -2495,21 +1834,13 @@ async def run_child_bot(tenant: Tenant):
         text = None
 
         if msg.photo:
-            media_id = msg.photo[-1].file_id
-            media_kind = "photo"
-            text = msg.caption or ""
+            media_id = msg.photo[-1].file_id; media_kind = "photo"; text = msg.caption or ""
         elif msg.video:
-            media_id = msg.video.file_id
-            media_kind = "video"
-            text = msg.caption or ""
+            media_id = msg.video.file_id; media_kind = "video"; text = msg.caption or ""
         elif msg.document:
-            media_id = msg.document.file_id
-            media_kind = "document"
-            text = msg.caption or ""
+            media_id = msg.document.file_id; media_kind = "document"; text = msg.caption or ""
         elif msg.animation:
-            media_id = msg.animation.file_id
-            media_kind = "animation"
-            text = msg.caption or ""
+            media_id = msg.animation.file_id; media_kind = "animation"; text = msg.caption or ""
         else:
             text = msg.text or ""
 
@@ -2517,19 +1848,15 @@ async def run_child_bot(tenant: Tenant):
             await msg.answer("Нужно отправить текст или медиа (фото/видео/документ/GIF). Попробуйте ещё раз.")
             return
 
-        # Сохраняем всё + координаты исходного сообщения для copy_message
         await state.update_data(
-            bcast_text=text,
-            bcast_media=media_id,
-            bcast_media_kind=media_kind,
-            bcast_src_chat=msg.chat.id,
-            bcast_src_msg=msg.message_id,
+            bcast_text=text, bcast_media=media_id, bcast_media_kind=media_kind,
+            bcast_src_chat=msg.chat.id, bcast_src_msg=msg.message_id,
         )
 
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="🚀 Запустить", callback_data="adm:bc:run")],
-                [InlineKeyboardButton(text="❌ Отмена", callback_data="adm:menu")],
+                [InlineKeyboardButton(text="🚀 Запустить", callback_data="adm:bc:run"),
+                 InlineKeyboardButton(text="❌ Отмена", callback_data="adm:menu")],
             ]
         )
 
@@ -2572,18 +1899,89 @@ async def run_child_bot(tenant: Tenant):
     async def refresh_progress(cb: CallbackQuery):
         db = SessionLocal()
         try:
-            user = db.query(User).filter(
-                User.tenant_id == tenant.id,
-                User.tg_user_id == cb.from_user.id
-            ).first()
+            user = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == cb.from_user.id).first()
             if not user:
                 await cb.answer(); return
             with contextlib.suppress(Exception):
-                await safe_delete_message(bot, cb.from_user.id, getattr(cb.message, "message_id", None))
-            await recompute_and_route(bot, tenant, user)
+                await safe_delete_message(cb.message.bot, cb.from_user.id, getattr(cb.message, "message_id", None))
+            await recompute_and_route(cb.message.bot, tenant, user)
             await cb.answer("Обновлено")
         finally:
             db.close()
+
+    # ---- Поиск пользователей по TG ID / @username / TraderID
+    @r.message(AdminForm.users_search_query)
+    async def on_users_search_query(msg: Message, state: FSMContext):
+        raw = (msg.text or "").strip()
+        if not raw:
+            await msg.answer("Пустой запрос. Пришлите TG ID, @username или Trader ID.")
+            return
+
+        db = SessionLocal()
+        try:
+            found_ids = []
+
+            # 1) TG ID
+            is_tg_id = False
+            try:
+                val = int(raw); is_tg_id = True
+            except Exception:
+                pass
+            if is_tg_id:
+                u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == int(raw)).first()
+                if u and u.tg_user_id: found_ids.append(u.tg_user_id)
+
+            # 2) @username
+            if not found_ids and (raw.startswith("@") or raw.replace("_", "").isalnum()):
+                uname = raw.lstrip("@")
+                try:
+                    chat = await msg.bot.get_chat(uname)
+                    if getattr(chat, "id", None):
+                        u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == int(chat.id)).first()
+                        if u and u.tg_user_id:
+                            found_ids.append(u.tg_user_id)
+                except Exception:
+                    pass
+
+            # 3) Trader ID (и запасной click_id)
+            if not found_ids:
+                q = db.query(User).filter(User.tenant_id == tenant.id)
+                users_trader = q.filter(User.trader_id == raw).all()
+                for u in users_trader:
+                    if u.tg_user_id: found_ids.append(u.tg_user_id)
+                if not found_ids:
+                    users_click = q.filter(User.click_id == raw).all()
+                    for u in users_click:
+                        if u.tg_user_id: found_ids.append(u.tg_user_id)
+
+            # уникализируем
+            seen = set(); uniq_ids = []
+            for uid in found_ids:
+                if uid not in seen:
+                    uniq_ids.append(uid); seen.add(uid)
+        finally:
+            db.close()
+
+        if not uniq_ids:
+            await msg.answer("Ничего не найдено. Попробуйте другой TG ID / @username / Trader ID.")
+            return
+
+        await state.clear()
+
+        if len(uniq_ids) == 1:
+            uid = uniq_ids[0]
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="👤 Открыть профиль", callback_data=f"adm:user:{uid}")],
+                [InlineKeyboardButton(text="⬅️ К списку рефов", callback_data="adm:users")],
+            ])
+            await msg.answer(f"Найден пользователь: <code>{uid}</code>", reply_markup=kb)
+            return
+
+        rows = []
+        for uid in uniq_ids[:10]:
+            rows.append([InlineKeyboardButton(text=str(uid), callback_data=f"adm:user:{uid}")])
+        rows.append([InlineKeyboardButton(text="⬅️ К списку рефов", callback_data="adm:users")])
+        await msg.answer("Найдено несколько совпадений:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
     # подключаем роутер и запускаем поллинг
     dp.include_router(r)
@@ -2597,7 +1995,6 @@ async def run_child_bot(tenant: Tenant):
     finally:
         with contextlib.suppress(Exception):
             await bot.session.close()
-
 
 # ---------------------- ПРОГРЕСС (централизованный роутер) ----------------------
 async def recompute_and_route(bot: Bot, tenant: Tenant, user: User):

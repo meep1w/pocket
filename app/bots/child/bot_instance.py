@@ -1028,7 +1028,7 @@ def _vip_list_build_rows(cands, page: int, page_cb_prefix: str):
         nav.append(InlineKeyboardButton(text="« Назад", callback_data=f"{page_cb_prefix}:{page-1}"))
     nav.append(InlineKeyboardButton(text=f"Стр. {page}/{pages}", callback_data="adm:noop"))
     if page < pages:
-        nav.append(InlineKeyboardButton(text="Вперёд »", callback_data=f"{page_cb_prefix}:{page+1}"))
+        nav.append(InlineKeyboardButton(text="Вперёд»", callback_data=f"{page_cb_prefix}:{page+1}"))
     if nav:
         rows.append(nav)
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:people")])  # назад в «Пользователи»

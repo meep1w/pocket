@@ -822,13 +822,14 @@ def kb_people_hub():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔎 Поиск (TG/@username/TraderID)", callback_data="adm:people:search")],
-            [InlineKeyboardButton(text="👥 Ваши рефы", callback_data="adm:users"),
-             InlineKeyboardButton(text="👑 Кандидаты PLATINUM", callback_data="adm:vip:list")],
-            [InlineKeyboardButton(text="✅ Выдать PLATINUM", callback_data="adm:vip:grant"),
-             InlineKeyboardButton(text="🛠 PLATINUM мини-апп", callback_data="adm:vip:miniapp")],
+            [
+                InlineKeyboardButton(text="👥 Ваши рефы", callback_data="adm:users"),
+                InlineKeyboardButton(text="👑 Кандидаты PLATINUM", callback_data="adm:vip:list"),
+            ],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="adm:menu")],
         ]
     )
+
 
 
 def kb_admin_links():
@@ -1193,7 +1194,7 @@ async def run_child_bot(tenant: Tenant):
             await msg.answer("⛔️ Нет доступа (вы не владелец этого бота)")
             return
         await state.clear()
-        await msg.answer("<b>Админ-панель v2</b>", reply_markup=kb_admin_main())
+        await msg.answer("<b>Панель администратора</b>", reply_markup=kb_admin_main())
 
     @r.callback_query(
         lambda c: (
@@ -1627,15 +1628,23 @@ async def run_child_bot(tenant: Tenant):
                 f"Обновлён: {upd_str}\n"
             )
 
+            # --- КНОПКИ ДЕЙСТВИЙ В КАРТОЧКЕ ---
             kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🧾 Регистрация", callback_data=f"adm:vip:do:reg:{uid}"),
-                 InlineKeyboardButton(text="💳 Депозит", callback_data=f"adm:vip:do:dep:{uid}")],
-                [InlineKeyboardButton(text=("👑 Выкл VIP" if u.is_vip else "👑 Вкл VIP"),
-                                      callback_data=(f"adm:vip:unset:{uid}" if u.is_vip else f"adm:vip:set:{uid}")),
-                 InlineKeyboardButton(text="🟣 VIP URL", callback_data=f"adm:vip:url:ask:{uid}")],
-                [InlineKeyboardButton(text="↩️ Обычная мини-апп", callback_data=f"adm:vip:miniapp:stock:{uid}")],
-                [InlineKeyboardButton(text="⬅️ К списку", callback_data="adm:users"),
-                 InlineKeyboardButton(text="🏠 Главное меню", callback_data="adm:menu")],
+                [
+                    InlineKeyboardButton(text="🧾 Ручная рега", callback_data=f"adm:vip:do:reg:{uid}"),
+                    InlineKeyboardButton(text="💳 Ручной деп", callback_data=f"adm:vip:do:dep:{uid}"),
+                ],
+                [
+                    InlineKeyboardButton(text="👑 Вкл PREM", callback_data=f"adm:vip:miniapp:set:{uid}"),
+                    InlineKeyboardButton(text="❌ Выкл PREM", callback_data=f"adm:vip:unset:{uid}"),
+                ],
+                [
+                    InlineKeyboardButton(text="↩️ Обычная мини-апп", callback_data=f"adm:vip:miniapp:stock:{uid}"),
+                ],
+                [
+                    InlineKeyboardButton(text="⬅️ К списку рефов", callback_data="adm:users"),
+                    InlineKeyboardButton(text="🏠 Главное меню", callback_data="adm:menu"),
+                ],
             ])
 
             await _safe_edit_msg(cb, txt, kb)

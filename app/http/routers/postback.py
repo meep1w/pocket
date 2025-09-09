@@ -11,23 +11,54 @@ from sqlalchemy import func
 from app.db import SessionLocal
 from app.models import Postback, Tenant, User, UserStep, TenantText, TenantConfig
 from app.settings import settings
-
+import re
 router = APIRouter()
 
 
 # ----------------------- helpers -----------------------
 def norm_event(raw: str) -> str:
     r = (raw or "").lower().strip()
-    # регистрируем всё, что похоже на регистрацию
-    if r in ("reg", "registration", "signup", "sign_up"):
+    if r in {"reg", "registration", "signup", "sign_up"}:
         return "registration"
-    # любые варианты депозитов -> единый "deposit" (чтобы всё копилось)
-    if r in (
-        "dep", "deposit", "payment", "first_deposit", "repeat_deposit", "deposit_repeat",
-        "redeposit", "additional_deposit", "extra_deposit"
-    ):
+    # Любые повторы считаем депозитом
+    if r in {"dep", "deposit", "payment", "deposit_repeat", "repeat_deposit", "redeposit", "redep"}:
         return "deposit"
     return r
+
+def _extract_tg_id(val: Optional[str]) -> Optional[int]:
+    """Пробуем вытащить TG ID из click_id: либо целиком цифры, либо первая длинная цифропоследовательность."""
+    if not val:
+        return None
+    s = str(val).strip()
+    if s.isdigit():
+        try:
+            return int(s)
+        except Exception:
+            return None
+    m = re.search(r"\d{6,12}", s)  # TG ID обычно 7–11 цифр
+    if m:
+        try:
+            return int(m.group(0))
+        except Exception:
+            return None
+    return None
+
+def _resolve_user(db, tenant_id: int, click_id: Optional[str], trader_id: Optional[str]):
+    """
+    Находим пользователя по tg_user_id (если click_id выглядит как число),
+    иначе по click_id, иначе по trader_id. Возвращаем (user, uid_candidate).
+    """
+    uid_candidate = _extract_tg_id(click_id)
+    u = None
+    if uid_candidate:
+        u = db.query(User).filter(User.tenant_id == tenant_id, User.tg_user_id == uid_candidate).first()
+    if not u and click_id:
+        u = db.query(User).filter(User.tenant_id == tenant_id, User.click_id == click_id).first()
+    if not u and trader_id:
+        u = db.query(User).filter(User.tenant_id == tenant_id, User.trader_id == trader_id).first()
+    return u, uid_candidate
+
+
 
 
 def _parse_sum(params: dict) -> float:
@@ -158,10 +189,12 @@ async def handle_postback(request: Request):
 
         # ----- registration -----
         if event == "registration":
+            user, uid_candidate = _resolve_user(db, tenant_id, click_id, trader_id)
+
             if not user:
                 user = User(
                     tenant_id=tenant_id,
-                    tg_user_id=int(click_id) if click_id and str(click_id).isdigit() else None,
+                    tg_user_id=uid_candidate,  # если сможем извлечь
                     click_id=click_id,
                     trader_id=trader_id,
                     step=UserStep.registered,
@@ -171,44 +204,50 @@ async def handle_postback(request: Request):
                 db.commit()
                 notify = True
             else:
+                # обновим идентификаторы/статус
+                if not user.tg_user_id and uid_candidate:
+                    user.tg_user_id = uid_candidate
+                if click_id:
+                    user.click_id = click_id
+                if trader_id:
+                    user.trader_id = trader_id
                 if user.step in (UserStep.new, UserStep.asked_reg, UserStep.asked_deposit):
                     user.step = UserStep.registered
-                    if click_id: user.click_id = click_id
-                    if trader_id: user.trader_id = trader_id
-                    user.updated_at = datetime.utcnow()
-                    db.commit()
                     notify = True
+                user.updated_at = datetime.utcnow()
+                db.commit()
 
-            # если депозит не обязателен — сразу открываем доступ
-            if notify and not cfg.require_deposit:
-                if user.step != UserStep.deposited:
-                    user.step = UserStep.deposited
-                    db.commit()
+            # если депозит не обязателен — сразу открыть доступ
+            if notify and not cfg.require_deposit and user.step != UserStep.deposited:
+                user.step = UserStep.deposited
+                db.commit()
 
-        # ----- deposit (включая повторные, всё уже нормализовано) -----
+        # ----- deposit (вкл. повторные) -----
         elif event == "deposit":
+            user, uid_candidate = _resolve_user(db, tenant_id, click_id, trader_id)
             dep_total_now = _dep_total(db, tenant_id, user, click_id)
 
             if not user:
                 user = User(
                     tenant_id=tenant_id,
-                    tg_user_id=int(click_id) if click_id and str(click_id).isdigit() else None,
+                    tg_user_id=uid_candidate,
                     click_id=click_id,
                     trader_id=trader_id,
-                    step=(
-                        UserStep.deposited
-                        if (cfg.require_deposit is False or dep_total_now >= cfg.min_deposit)
-                        else UserStep.asked_deposit
-                    ),
+                    step=(UserStep.deposited if (cfg.require_deposit is False or dep_total_now >= cfg.min_deposit)
+                          else UserStep.asked_deposit),
                     updated_at=datetime.utcnow(),
                 )
                 db.add(user)
                 db.commit()
                 notify = True
             else:
-                # обновим идентификаторы на всякий случай
-                if click_id: user.click_id = click_id
-                if trader_id: user.trader_id = trader_id
+                # подтянем идентификаторы
+                if not user.tg_user_id and uid_candidate:
+                    user.tg_user_id = uid_candidate
+                if click_id:
+                    user.click_id = click_id
+                if trader_id:
+                    user.trader_id = trader_id
 
                 if cfg.require_deposit:
                     user.step = UserStep.deposited if dep_total_now >= cfg.min_deposit else UserStep.asked_deposit

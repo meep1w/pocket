@@ -2012,6 +2012,7 @@ async def run_child_bot(tenant: Tenant):
             )
             await cb.answer(); return
 
+        # --- Запуск рассылки
         if data == "adm:bc:run":
             data_state = await state.get_data()
             seg = data_state.get("bcast_segment", "all")
@@ -2021,7 +2022,7 @@ async def run_child_bot(tenant: Tenant):
             src_chat_id = data_state.get("bcast_src_chat")
             src_msg_id = data_state.get("bcast_src_msg")
 
-            # Соберём список получателей
+            # Собираем список получателей
             db = SessionLocal()
             try:
                 q = db.query(User).filter(User.tenant_id == tenant.id)
@@ -2035,10 +2036,15 @@ async def run_child_bot(tenant: Tenant):
 
             total = len(users)
             if total == 0:
-                await _safe_edit_msg(cb, "📣 В выбранном сегменте нет получателей.", kb_broadcast_segments())
-                await cb.answer(); return
+                await cb.message.edit_text(
+                    "📣 В выбранном сегменте нет получателей.",
+                    reply_markup=kb_broadcast_segments()
+                )
+                await cb.answer()
+                return
 
-            rate = int(getattr(settings, "broadcast_rate_per_hour", 60) or 60)
+            # Ограничение скорости
+            rate = int(getattr(settings, "broadcast_rate_per_hour", 60) or 60)  # сообщений/час
             rate = max(10, min(rate, 3600))
             interval = max(1.0, 3600.0 / rate)
 
@@ -2060,8 +2066,14 @@ async def run_child_bot(tenant: Tenant):
                 for uid in users:
                     try:
                         if src_chat_id and src_msg_id:
-                            await bot_local.copy_message(chat_id=uid, from_chat_id=src_chat_id, message_id=src_msg_id)
+                            # Копируем оригинальное сообщение 1-в-1 (с медиа/подписями)
+                            await bot_local.copy_message(
+                                chat_id=uid,
+                                from_chat_id=src_chat_id,
+                                message_id=src_msg_id
+                            )
                         else:
+                            # Отправляем как собранный контент
                             if media_kind == "photo":
                                 await bot_local.send_photo(uid, media_id, caption=text or "")
                             elif media_kind == "video":
@@ -2075,10 +2087,10 @@ async def run_child_bot(tenant: Tenant):
                         sent += 1
                     except Exception as e:
                         failed += 1
-                        msg = str(e)
+                        msg = str(e).lower()
                         if "blocked by the user" in msg:
                             key = "blocked_by_user"
-                        elif "can't initiate conversation" in msg or "initiate conversation" in msg:
+                        elif "initiate conversation" in msg or "can't initiate conversation" in msg:
                             key = "no_start_from_user"
                         elif "chat not found" in msg:
                             key = "chat_not_found"
@@ -2087,27 +2099,30 @@ async def run_child_bot(tenant: Tenant):
                         else:
                             key = msg[:120]
                         errors[key] = errors.get(key, 0) + 1
+
                     await asyncio.sleep(interval)
 
                 parts = [f"📣 Рассылка завершена.\nОтправлено: <b>{sent}</b>\nОшибок: <b>{failed}</b>"]
                 if failed:
+                    mapping = {
+                        "blocked_by_user": "пользователь заблокировал бота",
+                        "no_start_from_user": "юзер не писал боту",
+                        "chat_not_found": "чат не найден (id устарел/невалиден)",
+                        "user_deactivated": "аккаунт удалён",
+                    }
                     top = sorted(errors.items(), key=lambda x: -x[1])[:5]
                     parts.append("\nПричины ошибок:")
                     for k, n in top:
-                        title = {
-                            "blocked_by_user": "пользователь заблокировал бота",
-                            "no_start_from_user": "юзер не писал боту",
-                            "chat_not_found": "чат не найден (id устарел/невалиден)",
-                            "user_deactivated": "аккаунт удалён",
-                        }.get(k, k)
-                        parts.append(f"• {title}: <b>{n}</b>")
+                        parts.append(f"• {mapping.get(k, k)}: <b>{n}</b>")
+
                 summary = "\n".join(parts)
-
                 with contextlib.suppress(Exception):
-                    await cb.message.bot.send_message(tenant.owner_tg_id, summary)
+                    await bot_local.send_message(tenant.owner_tg_id, summary)
 
+            # <<< ВАЖНО: запускаем фоном
             asyncio.create_task(_run_broadcast())
-            await cb.answer(); return
+            await cb.answer()
+            return
 
     # -------------------- MESSAGE HANDLERS (Admin states) --------------------
 

@@ -8,6 +8,7 @@ from typing import Dict, Optional, Tuple, Any
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramUnauthorizedError
+from sqlalchemy.orm import close_all_sessions
 
 from app.db import SessionLocal, engine
 from app.models import Tenant, TenantStatus
@@ -320,6 +321,12 @@ def main():
         if _parent_bot is not None:
             with contextlib.suppress(Exception):
                 await _parent_bot.session.close()
+        try:
+            close_all_sessions()  # закрыть все активные ORM-сессии
+        except Exception:
+            pass
+        with contextlib.suppress(Exception):
+            engine.dispose()
 
     try:
         loop.run_until_complete(_run())

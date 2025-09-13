@@ -3,6 +3,7 @@ import asyncio
 import contextlib
 from math import ceil
 from typing import Optional, List, Tuple, Union
+from sqlalchemy import func, or_
 
 from aiogram import Bot, Dispatcher, F, Router, BaseMiddleware
 from aiogram.client.default import DefaultBotProperties
@@ -13,8 +14,9 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 from aiogram.filters import Command
+
 
 from sqlalchemy import func
 
@@ -186,13 +188,13 @@ DEFAULT_TEXTS = {
         "ru": "🇷🇺 Русский", "en": "🇷🇺 Russian", "hi": "🇷🇺 रूसी", "es": "🇷🇺 Ruso"
     },
     "lang_label_en": {
-        "ru": "🇬🇧 Английский", "en": "🇬🇧 English", "hi": "🇬🇧 अंग्रेज़ी", "es": "🇬🇧 Inglés"
+        "ru": "🇬🇧 English", "en": "🇬🇧 English", "hi": "🇬🇧 अंग्रेज़ी", "es": "🇬🇧 Inglés"
     },
     "lang_label_hi": {
-        "ru": "🇮🇳 Хинди", "en": "🇮🇳 Hindi", "hi": "🇮🇳 हिन्दी", "es": "🇮🇳 Hindi"
+        "ru": "🇮🇳 Hindi", "en": "🇮🇳 Hindi", "hi": "🇮🇳 हिन्दी", "es": "🇮🇳 Hindi"
     },
     "lang_label_es": {
-        "ru": "🇪🇸 Испанский", "en": "🇪🇸 Spanish", "hi": "🇪🇸 स्पेनिश", "es": "🇪🇸 Español"
+        "ru": "🇪🇸 Spanish", "en": "🇪🇸 Spanish", "hi": "🇪🇸 स्पेनिश", "es": "🇪🇸 Español"
     },
 }
 
@@ -314,22 +316,22 @@ def parse_channel_field(raw: str) -> tuple[Optional[Union[int, str]], Optional[s
 
 async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
     """
-    Строгая, но более устойчивая проверка:
+    Строгая, но устойчивaя проверка:
     - приватный канал: ID '-100...' приводим к int;
     - публичный: пробуем '@name' и 'name' (без @);
-    - Forbidden/BadRequest -> False, но логируем причину для диагностики.
+    - Forbidden/BadRequest -> False, но логируем причину.
     """
     ident, _ = parse_channel_field(channel_url or "")
     if not ident:
         return True  # не задан канал — не блокируем
 
     chat_id = ident
-    try:
+    # аккуратно приводим к int только если это str вида "-100..."
+    if isinstance(ident, str):
         s = ident.strip()
         if s.startswith("-100") and s[1:].isdigit():
-            chat_id = int(s)  # приватка: int работает стабильнее
-    except Exception:
-        pass
+            with contextlib.suppress(Exception):
+                chat_id = int(s)
 
     try:
         m = await bot.get_chat_member(chat_id, user_id)
@@ -337,7 +339,6 @@ async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
         return status in ("member", "administrator", "creator", "restricted")
 
     except TelegramBadRequest as e:
-        msg = str(e).lower()
         # иногда '@name' срабатывает без '@'
         if isinstance(chat_id, str) and chat_id.startswith("@"):
             try:
@@ -356,6 +357,7 @@ async def is_user_subscribed(bot: Bot, channel_url: str, user_id: int) -> bool:
     except Exception as e:
         print(f"[subscribe-check][unexpected] ident={ident} uid={user_id} err={e!r}")
         return False
+
 
 # ---------------------- УТИЛЫ ДЛЯ СВЕЖИХ ДАННЫХ ----------------------
 def tget(db, tenant_id: int, key: str, locale: str, fallback_text: str):
@@ -395,13 +397,36 @@ def get_fresh_tenant(db: SessionLocal, tenant_id: int) -> Tenant:
     return db.query(Tenant).filter(Tenant.id == tenant_id).first()
 
 def get_deposit_total(db, tenant_id: int, user: User) -> int:
+    """
+    Суммируем все подтверждённые депозиты пользователя по любым связкам:
+      click_id ∈ {str(tg_user_id), user.click_id}
+      ИЛИ trader_id ∈ {user.trader_id}
+    """
+    click_keys = set()
+    if getattr(user, "tg_user_id", None):
+        click_keys.add(str(user.tg_user_id))
+    if getattr(user, "click_id", None):
+        click_keys.add(str(user.click_id))
+
+    trader_keys = set()
+    if getattr(user, "trader_id", None):
+        trader_keys.add(str(user.trader_id))
+
+    if not click_keys and not trader_keys:
+        return 0
+
     total = db.query(func.coalesce(func.sum(Postback.sum), 0)).filter(
         Postback.tenant_id == tenant_id,
         Postback.event == "deposit",
-        Postback.click_id == str(user.tg_user_id),
         Postback.token_ok.is_(True),
+        or_(
+            (Postback.click_id.in_(list(click_keys)) if click_keys else False),
+            (Postback.trader_id.in_(list(trader_keys)) if trader_keys else False),
+        )
     ).scalar() or 0
     return int(total)
+
+
 
 # -------------------------- ОТПРАВКА ЭКРАНА (авто-удаление) --------------------------
 async def send_screen(bot: Bot, user: User, key: str, locale: str, text: str,
@@ -458,10 +483,12 @@ def _normalize_support_url(u: Optional[str]) -> Optional[str]:
         return None
     if u.startswith("@"):
         return f"https://t.me/{u[1:]}"
+    if u.startswith("http://t.me/"):
+        return "https://" + u[len("http://"):]
+    if u.startswith("https://t.me/") or u.startswith("t.me/") or "t.me/" in u:
+        return "https://" + u.lstrip("/").lstrip("https://").lstrip("http://")
     if u.startswith("http://") or u.startswith("https://"):
         return u
-    if u.startswith("t.me/") or "t.me/" in u:
-        return "https://" + u.lstrip("/")
     return None
 
 def kb_main_with_labels(locale: str, support_url: Optional[str], tenant: Tenant, user: User, has_access: bool,
@@ -1086,6 +1113,9 @@ async def run_child_bot(tenant: Tenant):
 
     @r.message(Command("subdebug"))
     async def subdebug(msg: Message):
+        if msg.from_user.id != tenant.owner_tg_id:
+            await msg.answer("⛔️ Нет доступа")
+            return
         db = SessionLocal()
         try:
             user = db.query(User).filter(
@@ -1100,14 +1130,14 @@ async def run_child_bot(tenant: Tenant):
             ident, open_url = parse_channel_field(t.channel_url or "")
 
             chat_id = ident
-            try:
-                if ident and isinstance(ident, str) and ident.startswith("-100") and ident[1:].isdigit():
-                    chat_id = int(ident)
-            except Exception:
-                pass
+            if isinstance(ident, str):
+                s = ident.strip()
+                if s.startswith("-100") and s[1:].isdigit():
+                    with contextlib.suppress(Exception):
+                        chat_id = int(s)
 
             try:
-                m = await bot.get_chat_member(chat_id, user.tg_user_id)
+                m = await msg.bot.get_chat_member(chat_id, user.tg_user_id)
                 status_text = f"OK status={getattr(m, 'status', None)!r}"
             except Exception as e:
                 status_text = f"ERR {type(e).__name__}: {e}"
@@ -1149,7 +1179,8 @@ async def run_child_bot(tenant: Tenant):
                 await safe_delete_message(bot, cb.from_user.id, getattr(cb.message, "message_id", None))
 
             await render_main(bot, tenant, user)
-            await cb.answer("Language saved")
+            await cb.answer("Сохранено" if locale == "ru" else "Saved")
+
         finally:
             db.close()
 
@@ -2022,7 +2053,7 @@ async def run_child_bot(tenant: Tenant):
             src_chat_id = data_state.get("bcast_src_chat")
             src_msg_id = data_state.get("bcast_src_msg")
 
-            # Собираем список получателей
+            # Список получателей
             db = SessionLocal()
             try:
                 q = db.query(User).filter(User.tenant_id == tenant.id)
@@ -2043,15 +2074,10 @@ async def run_child_bot(tenant: Tenant):
                 await cb.answer()
                 return
 
-            # Ограничение скорости
-            rate = int(getattr(settings, "broadcast_rate_per_hour", 60) or 60)  # сообщений/час
-            rate = max(10, min(rate, 3600))
-            interval = max(1.0, 3600.0 / rate)
-
             await _safe_edit_msg(
                 cb,
                 f"📣 Рассылка запущена.\nПолучателей: <b>{total}</b>\n"
-                f"Скорость: ~{rate}/ч (~{interval:.1f}с/сообщение)\n\n"
+                "Скорость: адаптивная (зависит от ограничений Telegram и параллельности)\n\n"
                 "Итог по завершении придёт сюда.",
                 kb_admin_main()
             )
@@ -2063,17 +2089,25 @@ async def run_child_bot(tenant: Tenant):
                 errors: dict[str, int] = {}
                 bot_local = cb.message.bot
 
+                # Параллельность: по умолчанию 20, можно задать settings.broadcast_concurrency
+                concurrency = int(getattr(settings, "broadcast_concurrency", 20) or 20)
+                concurrency = max(1, min(concurrency, 100))
+                sem = asyncio.Semaphore(concurrency)
+
+                queue = asyncio.Queue()
                 for uid in users:
+                    await queue.put(uid)
+
+                async def _send_one(uid: int):
+                    nonlocal sent, failed, errors
                     try:
                         if src_chat_id and src_msg_id:
-                            # Копируем оригинальное сообщение 1-в-1 (с медиа/подписями)
                             await bot_local.copy_message(
                                 chat_id=uid,
                                 from_chat_id=src_chat_id,
                                 message_id=src_msg_id
                             )
                         else:
-                            # Отправляем как собранный контент
                             if media_kind == "photo":
                                 await bot_local.send_photo(uid, media_id, caption=text or "")
                             elif media_kind == "video":
@@ -2085,6 +2119,10 @@ async def run_child_bot(tenant: Tenant):
                             else:
                                 await bot_local.send_message(uid, text or "")
                         sent += 1
+                    except TelegramRetryAfter as e:
+                        # Телеграм просит подождать → ждём и пробуем ещё раз
+                        await asyncio.sleep(float(getattr(e, "retry_after", 1)) + 0.5)
+                        return await _send_one(uid)
                     except Exception as e:
                         failed += 1
                         msg = str(e).lower()
@@ -2100,7 +2138,15 @@ async def run_child_bot(tenant: Tenant):
                             key = msg[:120]
                         errors[key] = errors.get(key, 0) + 1
 
-                    await asyncio.sleep(interval)
+                async def _worker():
+                    while not queue.empty():
+                        uid = await queue.get()
+                        async with sem:
+                            await _send_one(uid)
+                        await asyncio.sleep(0)
+
+                workers = [asyncio.create_task(_worker()) for _ in range(concurrency)]
+                await asyncio.gather(*workers)
 
                 parts = [f"📣 Рассылка завершена.\nОтправлено: <b>{sent}</b>\nОшибок: <b>{failed}</b>"]
                 if failed:
@@ -2119,7 +2165,6 @@ async def run_child_bot(tenant: Tenant):
                 with contextlib.suppress(Exception):
                     await bot_local.send_message(tenant.owner_tg_id, summary)
 
-            # <<< ВАЖНО: запускаем фоном
             asyncio.create_task(_run_broadcast())
             await cb.answer()
             return
@@ -2630,11 +2675,13 @@ async def run_child_bot(tenant: Tenant):
                 User.tg_user_id == cb.from_user.id
             ).first()
             if not user:
-                await cb.answer(); return
+                await cb.answer();
+                return
             with contextlib.suppress(Exception):
                 await safe_delete_message(bot, cb.from_user.id, getattr(cb.message, "message_id", None))
             await recompute_and_route(bot, tenant, user)
-            await cb.answer("Обновлено")
+            locale = (user.lang or tenant.lang_default or "ru").lower()
+            await cb.answer("Обновлено" if locale == "ru" else "Updated")
         finally:
             db.close()
 

@@ -6,13 +6,16 @@ from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from app.db import SessionLocal
 from app.models import Postback, Tenant, User, UserStep, TenantText, TenantConfig
 from app.settings import settings
 import re
+import contextlib
+
 router = APIRouter()
+
 
 
 # ----------------------- helpers -----------------------
@@ -59,8 +62,6 @@ def _resolve_user(db, tenant_id: int, click_id: Optional[str], trader_id: Option
     return u, uid_candidate
 
 
-
-
 def _parse_sum(params: dict) -> float:
     # Берём из любых распространённых ключей
     candidates = [params.get("sum"), params.get("sumdep"), params.get("amount"), params.get("amt")]
@@ -82,26 +83,37 @@ def default_img_url(key: str, locale: str) -> str:
     return f"{base}/static/stock/{key}-{locale}.jpg"
 
 
-def _dep_total(db, tenant_id: int, user: Optional[User], click_id_param: Optional[str]) -> int:
+def _dep_total(db, tenant_id: int, user: Optional[User], click_id_param: Optional[str], trader_id_param: Optional[str] = None) -> int:
     """
-    Возвращает суммарный депозит по ключу click_id.
-    Предпочитаем tg_user_id пользователя (если есть), иначе – click_id из запроса.
-    Считаем ВСЕ депозиты (все "deposit" после нормализации).
+    Возвращает суммарный депозит:
+      click_id ∈ {str(user.tg_user_id), user.click_id, click_id_param}
+      ИЛИ trader_id ∈ {user.trader_id, trader_id_param}
     """
-    key = None
-    if user and user.tg_user_id:
-        key = str(user.tg_user_id)
-    elif click_id_param:
-        key = str(click_id_param)
+    click_keys = set()
+    if user and getattr(user, "tg_user_id", None):
+        click_keys.add(str(user.tg_user_id))
+    if user and getattr(user, "click_id", None):
+        click_keys.add(str(user.click_id))
+    if click_id_param:
+        click_keys.add(str(click_id_param))
 
-    if not key:
+    trader_keys = set()
+    if user and getattr(user, "trader_id", None):
+        trader_keys.add(str(user.trader_id))
+    if trader_id_param:
+        trader_keys.add(str(trader_id_param))
+
+    if not click_keys and not trader_keys:
         return 0
 
     total = db.query(func.coalesce(func.sum(Postback.sum), 0)).filter(
         Postback.tenant_id == tenant_id,
         Postback.event == "deposit",
-        Postback.click_id == key,
         Postback.token_ok.is_(True),
+        or_(
+            (Postback.click_id.in_(list(click_keys)) if click_keys else False),
+            (Postback.trader_id.in_(list(trader_keys)) if trader_keys else False),
+        )
     ).scalar() or 0
     return int(total)
 
@@ -118,7 +130,7 @@ async def handle_postback(request: Request):
     trader_id = params.get("trader_id")
 
     sum_val = _parse_sum(params)
-    sum_int = int(sum_val)  # для хранения в int поле, если у тебя sum:int; при желании можно сменить на Decimal/Float
+    sum_int = int(sum_val)  # если поле sum:int; при желании можно сменить на Decimal/Float
 
     raw_query_str = str(params)
 
@@ -146,8 +158,7 @@ async def handle_postback(request: Request):
             db.commit()
             raise HTTPException(status_code=403, detail="forbidden")
 
-        # мягкая идемпотентность: дублирующийся ТОЧНО такой же raw_query уже был
-        # (не блокируем повторные депозиты на те же суммы, если raw_query отличается)
+        # мягкая идемпотентность по raw_query
         existing = db.query(Postback).filter(
             Postback.tenant_id == tenant_id,
             Postback.event == event,
@@ -171,7 +182,6 @@ async def handle_postback(request: Request):
             cfg = TenantConfig(tenant_id=tenant_id, require_deposit=True, min_deposit=50)
             db.add(cfg)
             db.commit()
-        # гарантируем vip_threshold
         if getattr(cfg, "vip_threshold", None) is None:
             cfg.vip_threshold = 500
             db.commit()
@@ -194,7 +204,7 @@ async def handle_postback(request: Request):
             if not user:
                 user = User(
                     tenant_id=tenant_id,
-                    tg_user_id=uid_candidate,  # если сможем извлечь
+                    tg_user_id=uid_candidate,
                     click_id=click_id,
                     trader_id=trader_id,
                     step=UserStep.registered,
@@ -204,7 +214,6 @@ async def handle_postback(request: Request):
                 db.commit()
                 notify = True
             else:
-                # обновим идентификаторы/статус
                 if not user.tg_user_id and uid_candidate:
                     user.tg_user_id = uid_candidate
                 if click_id:
@@ -217,15 +226,14 @@ async def handle_postback(request: Request):
                 user.updated_at = datetime.utcnow()
                 db.commit()
 
-            # если депозит не обязателен — сразу открыть доступ
             if notify and not cfg.require_deposit and user.step != UserStep.deposited:
                 user.step = UserStep.deposited
                 db.commit()
 
-        # ----- deposit (вкл. повторные) -----
+        # ----- deposit (включая повторные) -----
         elif event == "deposit":
             user, uid_candidate = _resolve_user(db, tenant_id, click_id, trader_id)
-            dep_total_now = _dep_total(db, tenant_id, user, click_id)
+            dep_total_now = _dep_total(db, tenant_id, user, click_id, trader_id)
 
             if not user:
                 user = User(
@@ -241,7 +249,6 @@ async def handle_postback(request: Request):
                 db.commit()
                 notify = True
             else:
-                # подтянем идентификаторы
                 if not user.tg_user_id and uid_candidate:
                     user.tg_user_id = uid_candidate
                 if click_id:
@@ -261,6 +268,7 @@ async def handle_postback(request: Request):
 
         # ----- вывод экрана/уведомления -----
         if notify and user and user.tg_user_id and t.child_bot_token:
+            bot = None
             try:
                 bot = Bot(token=t.child_bot_token, default=DefaultBotProperties(parse_mode="HTML"))
                 locale = (user.lang or t.lang_default or "ru").lower()
@@ -279,14 +287,12 @@ async def handle_postback(request: Request):
                     return text, image_id
 
                 # удалить предыдущее сообщение
-                try:
+                with contextlib.suppress(Exception):
                     if user.last_message_id:
                         await bot.delete_message(user.tg_user_id, user.last_message_id)
-                except Exception:
-                    pass
 
                 # --- VIP уведомление при достижении порога ---
-                dep_total_vip = _dep_total(db, tenant_id, user, click_id)
+                dep_total_vip = _dep_total(db, tenant_id, user, click_id, trader_id)
                 try:
                     vip_thr = int(getattr(cfg, "vip_threshold", 500) or 500)
                 except Exception:
@@ -314,16 +320,14 @@ async def handle_postback(request: Request):
                     user.vip_notified = True
                     user.last_message_id = m.message_id
                     db.commit()
-                    await bot.session.close()
                     return  # отправили единственное уведомление — выходим
 
-                # --- обычные экраны (зависит от наличия доступа) ---
-                dep_total = _dep_total(db, tenant_id, user, click_id)
+                # --- обычные экраны (доступ/депозит) ---
+                dep_total = _dep_total(db, tenant_id, user, click_id, trader_id)
                 has_access = (not cfg.require_deposit and user.step >= UserStep.registered) or \
                              (cfg.require_deposit and dep_total >= cfg.min_deposit)
 
                 if has_access:
-                    # UNLOCKED
                     text, img = get_tt(
                         "unlocked",
                         "Доступ открыт. Нажмите «Получить сигнал».",
@@ -352,7 +356,6 @@ async def handle_postback(request: Request):
                     except Exception:
                         m = await bot.send_message(user.tg_user_id, text, reply_markup=kb)
                 else:
-                    # STEP 2 (депозит)
                     left = max(0, int(cfg.min_deposit) - dep_total)
                     text, img = get_tt(
                         "step2",
@@ -365,7 +368,8 @@ async def handle_postback(request: Request):
                         if locale == "ru" else
                         f"\n\n💵 Paid: ${dep_total} / ${cfg.min_deposit} (left ${left})"
                     )
-                    dep_url = f"{settings.service_host}/r/dep?tenant_id={tenant_id}&uid={user.tg_user_id}"
+                    # ЕДИНЫЙ путь депозита
+                    dep_url = f"{settings.service_host}/pocketoption/dep?tenant_id={tenant_id}&uid={user.tg_user_id}"
                     kb = InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(
                             text=("💳 Внести депозит" if locale == "ru" else "💳 Deposit"),
@@ -394,10 +398,13 @@ async def handle_postback(request: Request):
 
                 user.last_message_id = m.message_id
                 db.commit()
-                await bot.session.close()
             except Exception:
                 # проглатываем исключения отправки — endpoint всё равно ok
                 pass
+            finally:
+                with contextlib.suppress(Exception):
+                    if bot:
+                        await bot.session.close()
 
         return {"ok": True}
     finally:

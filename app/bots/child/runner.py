@@ -188,8 +188,9 @@ async def manager_loop():
         task = rec[0]
         if task and not task.done():
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            # Ждём ограниченное время, чтобы не зависнуть навсегда
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.wait_for(task, timeout=8)
         print(f"[runner] stopped child tenant_id={tid}")
         _write_child_status(tid, "stopped_by_manager")
 
@@ -321,12 +322,18 @@ def main():
         if _parent_bot is not None:
             with contextlib.suppress(Exception):
                 await _parent_bot.session.close()
-        try:
-            close_all_sessions()  # закрыть все активные ORM-сессии
-        except Exception:
-            pass
+
+        # Закрыть БД
+        from sqlalchemy.orm import close_all_sessions
+        close_all_sessions()
         with contextlib.suppress(Exception):
             engine.dispose()
+
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for t in pending:
+            t.cancel()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), timeout=5)
 
     try:
         loop.run_until_complete(_run())

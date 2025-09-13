@@ -2691,7 +2691,8 @@ async def run_child_bot(tenant: Tenant):
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
     except asyncio.CancelledError:
-        pass
+        # Важно: не глотаем отмену, чтобы stop_task() мог дождаться завершения
+        raise
     except Exception as e:
         print(f"[child] start_polling crashed for tenant_id={tenant.id}: {e!r}")
     finally:

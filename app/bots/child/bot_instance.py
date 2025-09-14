@@ -17,6 +17,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 from aiogram.filters import Command
 
+from urllib.parse import urlparse
+
+
 
 from app.models import Tenant, User, UserStep, TenantText, TenantConfig, Postback, TenantStatus
 from app.db import SessionLocal
@@ -427,66 +430,83 @@ def get_deposit_total(db, tenant_id: int, user: User) -> int:
 
 
 # -------------------------- ОТПРАВКА ЭКРАНА (авто-удаление) --------------------------
-# -------------------------- ОТПРАВКА ЭКРАНА (сначала send, потом delete старого) --------------------------
 async def send_screen(bot: Bot, user: User, key: str, locale: str, text: str,
                       kb: Optional[InlineKeyboardMarkup], image_file_id: Optional[str]):
-    """
-    Отправляем новый экран (фото/сток/текст), и только после успешной отправки
-    удаляем предыдущее сообщение (если было). Так не будет «тишины» при ошибках отправки.
-    """
-    old_msg_id = getattr(user, "last_message_id", None)
-    m = None
+    # Удаляем предыдущее сообщение бота (если было)
+    await safe_delete_message(bot, user.tg_user_id, getattr(user, "last_message_id", None))
+
+    async def _send_text_with_kb(_text: str):
+        # Всегда пробуем приклеить клавиатуру; если Телега её «съела» — дощёлкиваем edit_reply_markup
+        try:
+            m = await bot.send_message(user.tg_user_id, _text, reply_markup=kb, disable_web_page_preview=True)
+            user.last_message_id = m.message_id
+            return
+        except Exception:
+            # Последний шанс: без клавы → затем отдельно приклеим разметку
+            m = await bot.send_message(user.tg_user_id, _text, disable_web_page_preview=True)
+            user.last_message_id = m.message_id
+            if kb:
+                with contextlib.suppress(Exception):
+                    await bot.edit_message_reply_markup(user.tg_user_id, m.message_id, reply_markup=kb)
 
     # 1) Пытаемся отправить кастомную картинку
     if image_file_id:
         try:
             m = await bot.send_photo(user.tg_user_id, image_file_id, caption=text, reply_markup=kb)
-        except TelegramBadRequest:
-            m = None
+            user.last_message_id = m.message_id
+            return
+        except TelegramBadRequest as e:
+            # слишком длинная подпись? — отправим фото без подписи + текст отдельным сообщением с клавой
+            if "caption is too long" in str(e).lower():
+                with contextlib.suppress(Exception):
+                    m = await bot.send_photo(user.tg_user_id, image_file_id)
+                    user.last_message_id = m.message_id
+                await _send_text_with_kb(text)
+                return
         except Exception:
-            m = None
+            pass  # пойдём дальше на стоки/текст
 
-    # 2) Если не удалось — пробуем сток
-    if not m:
-        p = _find_stock_file(key, locale)
-        if p:
-            try:
-                m = await bot.send_photo(user.tg_user_id, FSInputFile(str(p)), caption=text, reply_markup=kb)
-            except Exception:
-                m = None
-
-    # 3) Последний фоллбек — просто текст
-    if not m:
+    # 2) Стоковая картинка, если есть
+    p = _find_stock_file(key, locale)
+    if p:
         try:
-            m = await bot.send_message(user.tg_user_id, text, reply_markup=kb)
+            m = await bot.send_photo(user.tg_user_id, FSInputFile(str(p)), caption=text, reply_markup=kb)
+            user.last_message_id = m.message_id
+            return
+        except TelegramBadRequest as e:
+            if "caption is too long" in str(e).lower():
+                with contextlib.suppress(Exception):
+                    m = await bot.send_photo(user.tg_user_id, FSInputFile(str(p)))
+                    user.last_message_id = m.message_id
+                await _send_text_with_kb(text)
+                return
         except Exception:
-            # совсем крайний случай: без клавы
-            with contextlib.suppress(Exception):
-                m = await bot.send_message(user.tg_user_id, text)
+            pass
 
-    # 4) Если что-то таки отправили — обновляем last_message_id и удаляем старое
-    if m:
-        user.last_message_id = m.message_id
-        with contextlib.suppress(Exception):
-            if old_msg_id and old_msg_id != user.last_message_id:
-                await safe_delete_message(bot, user.tg_user_id, old_msg_id)
-    # если не отправили вообще ничего — оставляем старое сообщение нетронутым
+    # 3) Текст + клавиатура (железобетонно)
+    await _send_text_with_kb(text)
+
 
 
 # -------------------------- URL МИНИ-АППЫ --------------------------
-def tenant_miniapp_url(tenant: Tenant, user: User) -> str:
+def tenant_miniapp_url(tenant: Tenant, user: User) -> Optional[str]:
+    # приоритет: кастом для юзера → VIP из ENV → tenant.miniapp_url → ENV обычный
+    candidates = []
     if getattr(user, "vip_miniapp_url", None):
-        base = user.vip_miniapp_url.rstrip("/")
-        return f"{base}?tenant_id={tenant.id}&uid={user.tg_user_id}"
+        candidates.append(user.vip_miniapp_url)
+    elif bool(getattr(user, "is_vip", False)) and getattr(settings, "vip_miniapp_url", None):
+        candidates.append(settings.vip_miniapp_url)
+    candidates.append(tenant.miniapp_url)
+    candidates.append(getattr(settings, "miniapp_url", None))
 
-    is_vip = bool(getattr(user, "is_vip", False))
-    vip_env = getattr(settings, "vip_miniapp_url", None)
-    if is_vip and vip_env:
-        base = vip_env.rstrip("/")
-        return f"{base}?tenant_id={tenant.id}&uid={user.tg_user_id}"
+    for base in candidates:
+        if not base:
+            continue
+        base = base.strip().rstrip("/")
+        if _is_https_url(base):
+            return f"{base}?tenant_id={tenant.id}&uid={user.tg_user_id}"
+    return None
 
-    base = (tenant.miniapp_url or settings.miniapp_url).rstrip("/")
-    return f"{base}?tenant_id={tenant.id}&uid={user.tg_user_id}"
 
 # ------------------------------- КНОПКИ -------------------------------
 def _normalize_support_url(u: Optional[str]) -> Optional[str]:
@@ -505,21 +525,26 @@ def _normalize_support_url(u: Optional[str]) -> Optional[str]:
         return u
     return None
 
+def _is_https_url(u: Optional[str]) -> bool:
+    if not u:
+        return False
+    try:
+        p = urlparse(u.strip())
+        return p.scheme == "https" and bool(p.netloc)
+    except Exception:
+        return False
+
 def kb_main_with_labels(locale: str, support_url: Optional[str], tenant: Tenant, user: User, has_access: bool,
                         btn_instruction: str, btn_support: str, btn_change_lang: str, btn_get_signal: str):
-    # Если доступ есть — сразу WebApp; иначе ведём по шагам
-    if has_access:
-        signal_btn = InlineKeyboardButton(
-            text=btn_get_signal,
-            web_app=WebAppInfo(url=tenant_miniapp_url(tenant, user)),
-        )
+    miniapp = tenant_miniapp_url(tenant, user)
+
+    if has_access and miniapp:
+        signal_btn = InlineKeyboardButton(text=btn_get_signal, web_app=WebAppInfo(url=miniapp))
     else:
-        signal_btn = InlineKeyboardButton(
-            text=btn_get_signal,
-            callback_data="menu:get",
-        )
+        signal_btn = InlineKeyboardButton(text=btn_get_signal, callback_data="menu:get")
 
     support_fallback = _normalize_support_url(support_url) or "https://t.me"
+
     rows = [
         [InlineKeyboardButton(text=btn_instruction, callback_data="menu:guide")],
         [InlineKeyboardButton(text=btn_support, url=support_fallback),
@@ -527,6 +552,7 @@ def kb_main_with_labels(locale: str, support_url: Optional[str], tenant: Tenant,
         [signal_btn],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 def kb_back_text(btn_main_text: str):
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=btn_main_text, callback_data="menu:main")]])

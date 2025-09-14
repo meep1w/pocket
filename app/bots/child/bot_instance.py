@@ -1196,10 +1196,18 @@ async def run_child_bot(tenant: Tenant):
                 await cb.answer()
                 return
 
-            with contextlib.suppress(Exception):
-                await safe_delete_message(bot, cb.from_user.id, getattr(cb.message, "message_id", None))
+            # Если язык не выбран (первый запуск и клик по "Главное меню") — ставим дефолт
+            if not user.lang:
+                user.lang = (tenant.lang_default or "ru").lower()
+                db.commit()
 
-            await render_main(bot, tenant, user)
+            # Сначала рендерим новый экран, потом удаляем старое сообщение —
+            # чтобы не остаться без экрана при любой ошибке отправки
+            await render_main(cb.message.bot, tenant, user)
+
+            with contextlib.suppress(Exception):
+                await safe_delete_message(cb.message.bot, cb.from_user.id, getattr(cb.message, "message_id", None))
+
             await cb.answer()
         finally:
             db.close()

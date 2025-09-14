@@ -549,37 +549,31 @@ def kb_subscribe(locale: str, channel_url: str,
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 # --------------------------- РЕНДЕР ЭКРАНОВ: UI ---------------------------
+# --------------------------- РЕНДЕР ЭКРАНОВ: UI ---------------------------
 async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang: Optional[str]):
-    """
-    Первый запуск: показываем выбор языка.
-    Все последующие /start при уже заданном user.lang → сразу главное меню (не язык).
-    """
     db = SessionLocal()
     try:
         tenant = get_fresh_tenant(db, tenant.id) or tenant
+        # Берём пользователя из ЭТОЙ сессии!
+        u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == user.tg_user_id).first()
+        if not u:
+            return
 
-        # локаль экрана (в каком языке показывать текст и подписи)
-        locale = (current_lang or tenant.lang_default or "ru").lower()
+        locale = (current_lang or u.lang or tenant.lang_default or "ru").lower()
 
-        # Текст/картинка экрана
         text, img = tget(db, tenant.id, "lang", locale, default_text("lang", locale))
-
-        # Текст кнопки "Главное меню"
         btn_main = tget_label(db, tenant.id, "btn_main", locale)
 
-        # Подписи языков (кастомизируемые через Контент)
         label_ru = tget_label(db, tenant.id, "lang_label_ru", locale)
         label_en = tget_label(db, tenant.id, "lang_label_en", locale)
         label_hi = tget_label(db, tenant.id, "lang_label_hi", locale)
         label_es = tget_label(db, tenant.id, "lang_label_es", locale)
 
-        # Отмечаем текущий выбранный язык галочкой (если есть)
         ru = ("✅ " if current_lang == "ru" else "") + label_ru
         en = ("✅ " if current_lang == "en" else "") + label_en
         hi = ("✅ " if current_lang == "hi" else "") + label_hi
         es = ("✅ " if current_lang == "es" else "") + label_es
 
-        # Собираем клавиатуру прямо тут
         rm = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=ru, callback_data="lang:ru"),
              InlineKeyboardButton(text=en, callback_data="lang:en")],
@@ -588,9 +582,8 @@ async def render_lang_screen(bot: Bot, tenant: Tenant, user: User, current_lang:
             [InlineKeyboardButton(text=btn_main, callback_data="menu:main")],
         ])
 
-        # Показываем экран (send_screen сам удалит предыдущее сообщение)
-        await send_screen(bot, user, "lang", locale, text, rm, img)
-        db.commit()
+        await send_screen(bot, u, "lang", locale, text, rm, img)
+        db.commit()  # сохранит u.last_message_id
     finally:
         db.close()
 
@@ -599,25 +592,26 @@ async def render_main(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
     try:
         tenant = get_fresh_tenant(db, tenant.id) or tenant
+        u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == user.tg_user_id).first()
+        if not u:
+            return
 
-        locale = (user.lang or tenant.lang_default or "ru").lower()
+        locale = (u.lang or tenant.lang_default or "ru").lower()
         cfg = get_cfg(db, tenant.id)
-
-        has_access = (user.step == UserStep.deposited) or (not cfg.require_deposit and user.step >= UserStep.registered)
+        has_access = (u.step == UserStep.deposited) or (not cfg.require_deposit and u.step >= UserStep.registered)
 
         text, img = tget(db, tenant.id, "main", locale, default_text("main", locale))
 
-        # Кастомные подписи кнопок
         btn_instruction = tget_label(db, tenant.id, "btn_instruction", locale)
         btn_support = tget_label(db, tenant.id, "btn_support", locale)
         btn_change_lang = tget_label(db, tenant.id, "btn_change_lang", locale)
         btn_get_signal = tget_label(db, tenant.id, "btn_get_signal", locale)
 
         kb = kb_main_with_labels(
-            locale, tenant.support_url, tenant, user, has_access,
+            locale, tenant.support_url, tenant, u, has_access,
             btn_instruction, btn_support, btn_change_lang, btn_get_signal
         )
-        await send_screen(bot, user, "main", locale, text, kb, img)
+        await send_screen(bot, u, "main", locale, text, kb, img)
         db.commit()
     finally:
         db.close()
@@ -627,11 +621,15 @@ async def render_guide(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
     try:
         tenant = get_fresh_tenant(db, tenant.id) or tenant
-        locale = (user.lang or tenant.lang_default or "ru").lower()
+        u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == user.tg_user_id).first()
+        if not u:
+            return
+
+        locale = (u.lang or tenant.lang_default or "ru").lower()
         t, i = tget(db, tenant.id, "guide", locale, default_text("guide", locale))
         t = apply_placeholders(t, tenant)
         btn_main = tget_label(db, tenant.id, "btn_main", locale)
-        await send_screen(bot, user, "guide", locale, t, kb_back_text(btn_main), i)
+        await send_screen(bot, u, "guide", locale, t, kb_back_text(btn_main), i)
         db.commit()
     finally:
         db.close()
@@ -641,7 +639,11 @@ async def render_subscribe(bot: Bot, tenant: Tenant, user: User):
     db = SessionLocal()
     try:
         tenant = get_fresh_tenant(db, tenant.id) or tenant
-        locale = (user.lang or tenant.lang_default or "ru").lower()
+        u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == user.tg_user_id).first()
+        if not u:
+            return
+
+        locale = (u.lang or tenant.lang_default or "ru").lower()
         text, img = tget(db, tenant.id, "subscribe", locale, default_text("subscribe", locale))
 
         btn_go = tget_label(db, tenant.id, "btn_go_channel", locale)
@@ -649,109 +651,91 @@ async def render_subscribe(bot: Bot, tenant: Tenant, user: User):
         btn_main = tget_label(db, tenant.id, "btn_main", locale)
 
         kb = kb_subscribe(locale, tenant.channel_url or "", btn_go, btn_chk, btn_main)
-        await send_screen(bot, user, "subscribe", locale, text, kb, img)
+        await send_screen(bot, u, "subscribe", locale, text, kb, img)
         db.commit()
     finally:
         db.close()
 
 
 async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool = False):
-    """
-    Экран «Получить сигнал»:
-    - последовательность: подписка (если включена) → регистрация (если step=new/asked_reg) → депозит (если включен)
-    - доступ открыт: один раз показываем «unlocked», потом — просто главное меню (а кнопка ведёт в мини-апп).
-    - VIP уведомление при достижении порога: удаляем предыдущее сообщение и отправляем уведомление (единожды), затем выходим.
-    """
     db = SessionLocal()
     try:
         tenant = get_fresh_tenant(db, tenant.id) or tenant
-        locale = (user.lang or tenant.lang_default or "ru").lower()
+        u = db.query(User).filter(User.tenant_id == tenant.id, User.tg_user_id == user.tg_user_id).first()
+        if not u:
+            return
+
+        locale = (u.lang or tenant.lang_default or "ru").lower()
         cfg = get_cfg(db, tenant.id)
 
         # 0) Подписка
         if getattr(cfg, "require_subscription", False):
-            ok = await is_user_subscribed(bot, tenant.channel_url or "", user.tg_user_id)
+            ok = await is_user_subscribed(bot, tenant.channel_url or "", u.tg_user_id)
             if not ok:
-                await render_subscribe(bot, tenant, user)
+                await render_subscribe(bot, tenant, u)
                 db.commit()
                 return
 
-        # VIP-инфо по порогу (уведомляем один раз, чисто)
+        # VIP уведомление один раз
         try:
-            dep_total = get_deposit_total(db, tenant.id, user)
+            dep_total = get_deposit_total(db, tenant.id, u)
             thr = int(getattr(cfg, "vip_threshold", 500) or 500)
-            if dep_total >= thr and not getattr(user, "vip_notified", False):
-                msg_txt = (
-                    "🎉 Поздравляем! Вам доступен премиум-бот. Напишите в поддержку для подключения."
-                    if locale == "ru" else
-                    "🎉 Congrats! You’re eligible for the premium bot. Please contact support to get access."
-                )
-
-                # удаляем прошлое сообщение и отправляем уведомление (сохраняем last_message_id)
-                await safe_delete_message(bot, user.tg_user_id, getattr(user, "last_message_id", None))
+            if dep_total >= thr and not getattr(u, "vip_notified", False):
+                msg_txt = ("🎉 Поздравляем! Вам доступен премиум-бот. Напишите в поддержку для подключения."
+                           if locale == "ru" else
+                           "🎉 Congrats! You’re eligible for the premium bot. Please contact support to get access.")
+                await safe_delete_message(bot, u.tg_user_id, getattr(u, "last_message_id", None))
                 kb_support = None
-                fresh_tenant = tenant  # уже свежий
-                if fresh_tenant.support_url:
+                if tenant.support_url:
                     kb_support = InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(text=("🆘 Поддержка" if locale == "ru" else "🆘 Support"),
-                                              url=_normalize_support_url(fresh_tenant.support_url) or fresh_tenant.support_url)]
+                                              url=_normalize_support_url(tenant.support_url) or tenant.support_url)]
                     ])
-                m = await bot.send_message(user.tg_user_id, msg_txt, reply_markup=kb_support)
-                user.last_message_id = m.message_id
-                user.vip_notified = True
+                m = await bot.send_message(u.tg_user_id, msg_txt, reply_markup=kb_support)
+                u.vip_notified = True
+                u.last_message_id = m.message_id
                 db.commit()
-                return  # только уведомление
+                return
         except Exception as e:
             print(f"[vip-notify] {e}")
 
-        # Доступ разрешён?
-        access = (user.step == UserStep.deposited) or (not cfg.require_deposit and user.step >= UserStep.registered)
+        # Доступ есть?
+        access = (u.step == UserStep.deposited) or (not cfg.require_deposit and u.step >= UserStep.registered)
         if force_unlocked or access:
-            if not getattr(user, "access_notified", False):
+            if not getattr(u, "access_notified", False):
                 text, img = tget(db, tenant.id, "unlocked", locale, default_text("unlocked", locale))
                 btn_get = tget_label(db, tenant.id, "btn_get_signal", locale)
                 btn_main = tget_label(db, tenant.id, "btn_main", locale)
-                kb = InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text=btn_get,
-                                web_app=WebAppInfo(url=tenant_miniapp_url(tenant, user)),
-                            )
-                        ],
-                        [InlineKeyboardButton(text=btn_main, callback_data="menu:main")],
-                    ]
-                )
-                await send_screen(bot, user, "unlocked", locale, text, kb, img)
-                user.access_notified = True
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text=btn_get, web_app=WebAppInfo(url=tenant_miniapp_url(tenant, u)))],
+                    [InlineKeyboardButton(text=btn_main, callback_data="menu:main")],
+                ])
+                await send_screen(bot, u, "unlocked", locale, text, kb, img)
+                u.access_notified = True
                 db.commit()
                 return
 
-            # Уже уведомляли — просто главное меню (кнопка «Получить сигнал» теперь открывает мини-апп)
-            await render_main(bot, tenant, user)
+            await render_main(bot, tenant, u)
             db.commit()
             return
 
         # Шаг 1 — Регистрация
-        if user.step in (UserStep.new, UserStep.asked_reg):
+        if u.step in (UserStep.new, UserStep.asked_reg):
             text, img = tget(db, tenant.id, "step1", locale, default_text("step1", locale))
-            url = f"{settings.service_host}/pocketoption/reg?tenant_id={tenant.id}&uid={user.tg_user_id}"
+            url = f"{settings.service_host}/pocketoption/reg?tenant_id={tenant.id}&uid={u.tg_user_id}"
             btn_main = tget_label(db, tenant.id, "btn_main", locale)
-            kb = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text=("🟢  Зарегистрироваться" if locale == "ru" else
-                                                "🟢  Register"), url=url)],
-                    [InlineKeyboardButton(text=btn_main, callback_data="menu:main")],
-                ]
-            )
-            user.step = UserStep.asked_reg
-            await send_screen(bot, user, "step1", locale, text, kb, img)
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=("🟢  Зарегистрироваться" if locale == "ru" else "🟢  Register"), url=url)],
+                [InlineKeyboardButton(text=btn_main, callback_data="menu:main")],
+            ])
+            u.step = UserStep.asked_reg
+            await send_screen(bot, u, "step1", locale, text, kb, img)
             db.commit()
             return
 
-        # Шаг 2 — Депозит (если обязателен)
+        # Шаг 2 — Депозит
         text, img = tget(db, tenant.id, "step2", locale, default_text("step2", locale))
-        dep_total = get_deposit_total(db, tenant.id, user)
+        dep_total = get_deposit_total(db, tenant.id, u)
         left = 0
         if cfg.require_deposit:
             text = text.replace("{{min_dep}}", str(cfg.min_deposit))
@@ -766,19 +750,18 @@ async def render_get(bot: Bot, tenant: Tenant, user: User, force_unlocked: bool 
         )
         text = text + progress_line
 
-        url = f"{settings.service_host}/pocketoption/dep?tenant_id={tenant.id}&uid={user.tg_user_id}"
+        url = f"{settings.service_host}/pocketoption/dep?tenant_id={tenant.id}&uid={u.tg_user_id}"
         btn_main = tget_label(db, tenant.id, "btn_main", locale)
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text=("💳 Внести депозит" if locale == "ru" else "💳 Deposit"), url=url)],
-                [InlineKeyboardButton(text=btn_main, callback_data="menu:main")],
-            ]
-        )
-        user.step = UserStep.asked_deposit
-        await send_screen(bot, user, "step2", locale, text, kb, img)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=("💳 Внести депозит" if locale == "ru" else "💳 Deposit"), url=url)],
+            [InlineKeyboardButton(text=btn_main, callback_data="menu:main")],
+        ])
+        u.step = UserStep.asked_deposit
+        await send_screen(bot, u, "step2", locale, text, kb, img)
         db.commit()
     finally:
         db.close()
+
 
 # ------------------------------- MIDDLEWARE -------------------------------
 class TenantGate(BaseMiddleware):

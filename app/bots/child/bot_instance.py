@@ -18,8 +18,6 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, Teleg
 from aiogram.filters import Command
 
 
-from sqlalchemy import func
-
 from app.models import Tenant, User, UserStep, TenantText, TenantConfig, Postback, TenantStatus
 from app.db import SessionLocal
 from app.settings import settings
@@ -429,35 +427,51 @@ def get_deposit_total(db, tenant_id: int, user: User) -> int:
 
 
 # -------------------------- ОТПРАВКА ЭКРАНА (авто-удаление) --------------------------
+# -------------------------- ОТПРАВКА ЭКРАНА (сначала send, потом delete старого) --------------------------
 async def send_screen(bot: Bot, user: User, key: str, locale: str, text: str,
                       kb: Optional[InlineKeyboardMarkup], image_file_id: Optional[str]):
     """
-    Централизованно удаляем предыдущее сообщение пользователя (если есть),
-    отправляем новый экран (с фото/стоком/текст).
+    Отправляем новый экран (фото/сток/текст), и только после успешной отправки
+    удаляем предыдущее сообщение (если было). Так не будет «тишины» при ошибках отправки.
     """
-    await safe_delete_message(bot, user.tg_user_id, getattr(user, "last_message_id", None))
+    old_msg_id = getattr(user, "last_message_id", None)
+    m = None
 
+    # 1) Пытаемся отправить кастомную картинку
     if image_file_id:
         try:
             m = await bot.send_photo(user.tg_user_id, image_file_id, caption=text, reply_markup=kb)
-            user.last_message_id = m.message_id
-            return
         except TelegramBadRequest:
-            pass
+            m = None
         except Exception:
-            pass
+            m = None
 
-    p = _find_stock_file(key, locale)
-    if p:
+    # 2) Если не удалось — пробуем сток
+    if not m:
+        p = _find_stock_file(key, locale)
+        if p:
+            try:
+                m = await bot.send_photo(user.tg_user_id, FSInputFile(str(p)), caption=text, reply_markup=kb)
+            except Exception:
+                m = None
+
+    # 3) Последний фоллбек — просто текст
+    if not m:
         try:
-            m = await bot.send_photo(user.tg_user_id, FSInputFile(str(p)), caption=text, reply_markup=kb)
-            user.last_message_id = m.message_id
-            return
+            m = await bot.send_message(user.tg_user_id, text, reply_markup=kb)
         except Exception:
-            pass
+            # совсем крайний случай: без клавы
+            with contextlib.suppress(Exception):
+                m = await bot.send_message(user.tg_user_id, text)
 
-    m = await bot.send_message(user.tg_user_id, text, reply_markup=kb)
-    user.last_message_id = m.message_id
+    # 4) Если что-то таки отправили — обновляем last_message_id и удаляем старое
+    if m:
+        user.last_message_id = m.message_id
+        with contextlib.suppress(Exception):
+            if old_msg_id and old_msg_id != user.last_message_id:
+                await safe_delete_message(bot, user.tg_user_id, old_msg_id)
+    # если не отправили вообще ничего — оставляем старое сообщение нетронутым
+
 
 # -------------------------- URL МИНИ-АППЫ --------------------------
 def tenant_miniapp_url(tenant: Tenant, user: User) -> str:

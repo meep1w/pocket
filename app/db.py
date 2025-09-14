@@ -1,5 +1,3 @@
-import asyncio
-
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from pathlib import Path
@@ -19,18 +17,3 @@ Base = declarative_base()
 
 def init_db(BaseModel):
     BaseModel.metadata.create_all(bind=engine)
-
-def close_db() -> None:
-    """
-    Синхронное закрытие пулов/коннектов.
-    Можно звать из асинхронного кода через to_thread.
-    """
-    # dispose() закрывает все соединения пула и освобождает ресурсы драйвера
-    engine.dispose()
-
-async def close_db_async() -> None:
-    """
-    Асинхронная обёртка для безопасного вызова dispose() в треде,
-    чтобы не блокировать event loop.
-    """
-    await asyncio.to_thread(close_db)

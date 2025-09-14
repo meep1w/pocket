@@ -8,7 +8,6 @@ from typing import Dict, Optional, Tuple, Any
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramUnauthorizedError
-from sqlalchemy.orm import close_all_sessions
 
 from app.db import SessionLocal, engine
 from app.models import Tenant, TenantStatus
@@ -188,9 +187,8 @@ async def manager_loop():
         task = rec[0]
         if task and not task.done():
             task.cancel()
-            # Ждём ограниченное время, чтобы не зависнуть навсегда
-            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
-                await asyncio.wait_for(task, timeout=8)
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         print(f"[runner] stopped child tenant_id={tid}")
         _write_child_status(tid, "stopped_by_manager")
 
@@ -322,18 +320,6 @@ def main():
         if _parent_bot is not None:
             with contextlib.suppress(Exception):
                 await _parent_bot.session.close()
-
-        # Закрыть БД
-        from sqlalchemy.orm import close_all_sessions
-        close_all_sessions()
-        with contextlib.suppress(Exception):
-            engine.dispose()
-
-        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-        for t in pending:
-            t.cancel()
-        with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), timeout=5)
 
     try:
         loop.run_until_complete(_run())
